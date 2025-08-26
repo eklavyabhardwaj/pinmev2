@@ -1,0 +1,88 @@
+{% load static %}
+<!DOCTYPE html>
+<html>
+<head>
+    <link rel="icon" type="image/x-icon" href="{% static 'favicon.ico' %}">
+    <link rel="icon" href="{% static 'favicon-32.png' %}" sizes="32x32">
+    <link rel="apple-touch-icon" href="{% static 'apple-touch-icon.png' %}">
+    <title>ERP Frappe Login</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+    
+
+  <link rel="stylesheet" href="{% static 'pinme.css' %}">
+</head>
+<body>
+    <div class="login-container">
+        <h1>Login to PinMe Portal</h1>
+
+        {% if messages %}
+        <ul class="messages">
+        {% for msg in messages %}
+        <li>{{ msg }}</li>
+        {% endfor %}
+        </ul>
+        {% endif %}
+
+        <form method="post" id="loginForm">
+            {% csrf_token %}
+
+            <div class="form-group">
+                <label for="username">Username/Email</label>
+                <input type="text" name="username" id="username" autocomplete="username" required>
+            </div>
+
+            <div class="form-group">
+                <label for="password">Password</label>
+                <input type="password" name="password" id="password" autocomplete="current-password" required>
+            </div>
+             <div class="form-group inline-center">
+  <div class="remember-row"><input type="checkbox" id="remember_me" name="remember_me" value="on" />
+  <label for="remember_me" class="inline">Remember me for 24 hours</label></div>
+</div>
+            <div><button class="btn btn-block pulse" type="submit" class="pulse">Log In</button>
+            </div>
+
+
+
+        </form>
+
+        <div class="form-footer">
+            <div class="powered-by">Secure login powered by Electrolab's Frappe ERP</div>
+        </div>
+                <div class="form-footer">
+            <div class="powered-by">Version: v1.08.2025.1</div>
+        </div>
+        <div class="copyright">
+            <p>&copy; 2025 Electrolab India Pvt Ltd. All rights reserved.</p>
+        </div>
+
+
+    </div>
+    <input type="hidden" name="next" value="{{ next }}">
+
+
+    <script>
+        // Add loading state on form submission
+        document.getElementById('loginForm').addEventListener('submit', function() {
+            this.classList.add('loading');
+            setTimeout(() => {
+                this.classList.remove('loading');
+            }, 3000);
+        });
+
+        // Add floating label effect with teal colors
+        document.querySelectorAll('input').forEach(input => {
+            input.addEventListener('focus', function() {
+                this.parentElement.querySelector('label').style.color = '#14b8a6';
+                this.parentElement.querySelector('label').classList.add('focused');
+            });
+
+            input.addEventListener('blur', function() {
+                this.parentElement.querySelector('label').style.color = '#6b7280';
+                this.parentElement.querySelector('label').classList.remove('focused');
+            });
+        });
+    </script>
+</body>
+</html>

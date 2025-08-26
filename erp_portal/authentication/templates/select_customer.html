@@ -1,0 +1,789 @@
+{% load static %}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <link rel="icon" type="image/x-icon" href="{% static 'favicon.ico' %}">
+  <meta charset="UTF-8" />
+  <title>PinMe - U&PO</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <link rel="stylesheet" href="{% static 'pinme.css' %}">
+  <style>
+    /* helper styles for Assign-To rows + tiny status */
+    .assign-row{display:flex;flex-direction:column}
+    .assign-name{font-weight:600}
+    .assign-email{font-size:.9em}
+    .mini-status{font-size:.85em;color:#6b7280;margin-top:6px}
+  </style>
+</head>
+<body>
+<div class="punch-container" role="main" aria-label="Select Customer and Punch Out">
+  <h1 id="greeting">Select Customer & Punch Out</h1>
+
+  <div class="form-group" id="customerSearchBlock">
+    <label for="customerInput">Customer</label>
+    <div class="dropdown-wrap" id="customerDropdownWrap">
+      <input type="text" id="customerInput" placeholder="Start typing to search..." autocomplete="off" aria-autocomplete="list" aria-haspopup="listbox" aria-expanded="false" aria-controls="dropdownList" />
+      <div class="dropdown-arrow" aria-hidden="true"></div>
+      <div class="dropdown-list" id="dropdownList" role="listbox" tabindex="-1"></div>
+    </div>
+
+    <div class="buttons">
+      <button id="btn-update-location" type="button" disabled>
+        Update Address through GPS
+      </button>
+    </div>
+  </div>
+
+  <!-- Remark (visible when NO customer is selected) -->
+  <div class="form-group" id="remarkFieldWrap" style="display:none;">
+    <label for="freeRemark">Remark</label>
+    <textarea id="freeRemark" rows="3" placeholder="Type your remark (e.g., new customer details, context)…"></textarea>
+    <div class="muted" style="margin-top:4px">
+      Visible only when no customer is selected. Will be saved in Employee Checkin.
+    </div>
+  </div>
+
+  <!-- Assign To -->
+  <div class="form-group" id="assignBlock">
+    <label for="assignInput">Assign To <span class="muted">(optional)</span></label>
+    <div class="dropdown-wrap" id="assignDropdownWrap">
+      <input type="text" id="assignInput" placeholder="Search employee name or email..." autocomplete="off" aria-autocomplete="list" aria-haspopup="listbox" aria-expanded="false" aria-controls="assignDropdownList" />
+      <div class="dropdown-arrow" aria-hidden="true"></div>
+      <div class="dropdown-list" id="assignDropdownList" role="listbox" tabindex="-1"></div>
+    </div>
+    <div id="assignMiniStatus" class="mini-status"></div>
+    <div class="muted" style="margin-top:4px">
+      Select a person to assign this punch-out in ERP.
+    </div>
+  </div>
+
+  <div class="form-group">
+    <label>Opportunities</label>
+    <ul id="opportunitiesList"></ul>
+  </div>
+
+  <div class="form-group">
+    <label>Items for Opportunity</label>
+    <ul id="itemsContainer"></ul>
+  </div>
+
+  <section id="meetingDetails" class="meeting-details" aria-label="Meeting details form" style="display:none;">
+    <div class="meeting-header">
+      <h2 class="meeting-title">Meeting Details</h2>
+      <div class="meeting-meta">
+        <span class="meta-badge" id="badgeOpportunity">No opportunity</span>
+        <span class="meta-badge" id="badgeCustomer">No customer</span>
+      </div>
+    </div>
+
+    <div id="meetingEntries"></div>
+
+    <div class="meeting-actions">
+      <button id="addEntry" class="btn btn-outline" type="button">Add Meeting Entry</button>
+      <button id="saveEntries" class="btn btn-primary" type="button">Save Entries</button>
+    </div>
+
+    <div class="meeting-footer">
+      <span id="meetingCount">0 entries</span>
+      <span id="lastSaved" class="muted">Not saved yet</span>
+    </div>
+  </section>
+
+  <div class="buttons">
+    <button id="btn-out" class="pulse" type="button">Punch Out</button>
+  </div>
+
+  <div class="status" id="status" role="alert" aria-live="assertive"></div>
+  <div class="copyright">
+    &copy; 2025 Electrolab India Pvt Ltd
+  </div>
+</div>
+
+<form method="post" action="{% url 'logout' %}" class="top-right">
+  {% csrf_token %}
+  <button type="submit" class="btn btn-danger">
+      Logout
+  </button>
+</form>
+
+<script>
+  // ===== Setup data =====
+  const qs = new URLSearchParams(location.search);
+  const urlCustomer = qs.get('customer') || qs.get('customer_name');
+
+  const customers = [
+    {% for c in customers %}
+      { name: '{{ c.name|escapejs }}', display: '{{ c.customer_name|escapejs }}' },
+    {% endfor %}
+  ];
+
+  // legacy fallback list (strings)
+  const employeesEmails = [
+    {% if employees_emails %}
+      {% for e in employees_emails %}
+        '{{ e|escapejs }}',
+      {% endfor %}
+    {% endif %}
+  ];
+
+  let selectedCustomer = null;
+  let selectedOpportunity = null;
+  const meetingData = {};
+  let autoSelectedOnLoad = false;
+
+  // Assign-To chosen email
+  let selectedAssignEmail = '';
+
+  // ===== Greeting =====
+  window.addEventListener('DOMContentLoaded', () => {
+    const h = new Date().getHours();
+    const greeting = h < 12 ? 'Good Morning' : h < 17 ? 'Good Afternoon' : 'Good Evening';
+    document.getElementById('greeting').textContent = `${greeting}, {{ employee_name|escapejs }}`;
+  });
+
+  function findCustomerFromQuery(q) {
+    if (!q) return null;
+    q = decodeURIComponent(q).trim();
+    let c = customers.find(x => x.name === q);
+    if (c) return c;
+    c = customers.find(x => x.display === q) ||
+        customers.find(x => x.display.toLowerCase() === q.toLowerCase());
+    if (c) return c;
+    const lc = q.toLowerCase();
+    return customers.find(x => x.display.toLowerCase().includes(lc)) || null;
+  }
+
+  function updateRemarkVisibility() {
+    const wrap = document.getElementById('remarkFieldWrap');
+    if (!wrap) return;
+    wrap.style.display = selectedCustomer ? 'none' : 'block';
+  }
+
+  // ===== Preselect from query + init Assign-To =====
+  window.addEventListener('DOMContentLoaded', () => {
+    const inp = document.getElementById('customerInput');
+    if (urlCustomer) {
+      const found = findCustomerFromQuery(urlCustomer);
+      if (found) {
+        selectedCustomer = found.name;
+        inp.value = found.display;
+        inp.setAttribute('readonly', 'readonly');
+        onCustomerChosen();
+        updateRemarkVisibility();
+        loadOpportunities();
+      } else {
+        console.warn('Customer from query not found in provided list:', urlCustomer);
+        updateRemarkVisibility();
+      }
+    } else {
+      updateRemarkVisibility();
+    }
+    initAssignTo(); // <— important
+  });
+
+  // ===== Customer dropdown =====
+  (function() {
+    const wrap = document.getElementById('customerDropdownWrap');
+    const inp = document.getElementById('customerInput');
+    const dd = document.getElementById('dropdownList');
+    let filtered = customers;
+    let highlighted = -1;
+
+    function showList(arr) {
+      dd.innerHTML = '';
+      if (!arr.length) {
+        const no = document.createElement('div');
+        no.className = 'no-results';
+        no.textContent = 'No customers found';
+        dd.appendChild(no);
+      } else {
+        arr.forEach((c,i) => {
+          const div = document.createElement('div');
+          div.className = 'dropdown-item';
+          div.textContent = c.display;
+          div.setAttribute('role','option');
+          if (i === highlighted) {
+            div.classList.add('highlighted');
+            div.setAttribute('aria-selected','true');
+          } else {
+            div.setAttribute('aria-selected','false');
+          }
+          div.addEventListener('click', () => selectCustomer(c));
+          dd.appendChild(div);
+        });
+      }
+      dd.classList.add('show');
+      wrap.classList.add('dropdown-open');
+      inp.setAttribute('aria-expanded', 'true');
+    }
+
+    function hideList() {
+      dd.classList.remove('show');
+      wrap.classList.remove('dropdown-open');
+      highlighted = -1;
+      inp.setAttribute('aria-expanded', 'false');
+    }
+
+    function selectCustomer(c) {
+      selectedCustomer = c.name;
+      inp.value = c.display;
+      hideList();
+      selectedOpportunity = null;
+      autoSelectedOnLoad = false;
+      onCustomerChosen();
+      updateRemarkVisibility();
+      loadOpportunities();
+    }
+
+    inp.addEventListener('focus', () => showList(customers));
+    inp.addEventListener('blur', () => setTimeout(hideList, 120));
+    inp.addEventListener('input', e => {
+      const q = e.target.value.toLowerCase();
+      filtered = customers.filter(c => c.display.toLowerCase().includes(q));
+      highlighted = -1;
+      showList(filtered);
+    });
+    inp.addEventListener('keydown', e => {
+      const items = [...dd.querySelectorAll('.dropdown-item')];
+      if (['ArrowDown','ArrowUp'].includes(e.key)) {
+        e.preventDefault();
+        if (!items.length) return;
+        highlighted = e.key === 'ArrowDown' ? Math.min(highlighted + 1, items.length - 1) : Math.max(highlighted - 1, 0);
+        items.forEach((el, i) => {
+          el.classList.toggle('highlighted', i === highlighted);
+          el.setAttribute('aria-selected', i === highlighted ? 'true' : 'false');
+        });
+        items[highlighted]?.scrollIntoView({block:'nearest'});
+      }
+      if (e.key === 'Enter' && highlighted >= 0) items[highlighted].click();
+      if (e.key === 'Escape') hideList();
+    });
+    document.addEventListener('mousedown', e => { if (!wrap.contains(e.target)) hideList(); });
+  })();
+
+  // ===== Opportunities & items =====
+  async function loadOpportunities() {
+    const ul = document.getElementById('opportunitiesList');
+    ul.innerHTML = '<li>Loading…</li>';
+
+    if (!selectedCustomer) {
+      ul.innerHTML = '<li style="color:#ef4444">No customer selected</li>';
+      return;
+    }
+
+    try {
+      const res = await fetch(`{% url 'get_opportunities' %}?customer=${encodeURIComponent(selectedCustomer)}`);
+      const data = await res.json();
+      const opportunities = Array.isArray(data.opportunities) ? data.opportunities : [];
+
+      ul.innerHTML = '';
+      if (!opportunities.length) {
+        ul.innerHTML = '<li style="color:#b0b9bf">No opportunities</li>';
+        document.getElementById('itemsContainer').innerHTML = '';
+        document.getElementById('meetingDetails').style.display = 'none';
+      } else {
+        opportunities.forEach(op => {
+          const li = document.createElement('li');
+          const a = document.createElement('a');
+          a.href = '#';
+          a.textContent = op.name;
+          a.onclick = e => { e.preventDefault(); selectOpportunity(op.name); };
+          if (selectedOpportunity === op.name) a.classList.add('active');
+          li.appendChild(a);
+          ul.appendChild(li);
+        });
+
+        if (!selectedOpportunity && !autoSelectedOnLoad) {
+          autoSelectedOnLoad = true;
+          selectOpportunity(opportunities[0].name);
+        }
+      }
+    } catch (e) {
+      console.error(e);
+      ul.innerHTML = '<li style="color:#ef4444">Error loading</li>';
+    }
+  }
+
+  async function loadItems(op) {
+    const ul = document.getElementById('itemsContainer');
+    ul.innerHTML = '<li>Loading…</li>';
+    try {
+      const res = await fetch(`{% url 'get_opportunity_items' %}?opportunity=${encodeURIComponent(op)}`);
+      const { items } = await res.json();
+      ul.innerHTML = '';
+      if (!items || !items.length) {
+        ul.innerHTML = '<li style="color:#9ca3af">No items</li>';
+      } else {
+        items.forEach(it => {
+          const li = document.createElement('li');
+          li.textContent = it.item_name;
+          ul.appendChild(li);
+        });
+      }
+    } catch {
+      ul.innerHTML = '<li style="color:#ef4444">Error loading items</li>';
+    }
+  }
+
+  function updateBadges() {
+    const bOpp = document.getElementById('badgeOpportunity');
+    const bCus = document.getElementById('badgeCustomer');
+    if (bOpp) bOpp.textContent = selectedOpportunity ? `Opportunity: ${selectedOpportunity}` : 'No opportunity';
+    if (bCus) bCus.textContent = selectedCustomer ? `Customer: ${customers.find(c=>c.name===selectedCustomer)?.display || selectedCustomer}` : 'No customer';
+  }
+  function updateMeetingFooter(saved=false) {
+    const count = document.querySelectorAll('.meeting-entry').length;
+    const mc = document.getElementById('meetingCount');
+    const ls = document.getElementById('lastSaved');
+    if (mc) mc.textContent = `${count} ${count===1?'entry':'entries'}`;
+    if (ls && saved) {
+      const dt = new Date();
+      ls.textContent = `Saved at ${dt.toLocaleTimeString()}`;
+    }
+  }
+
+  function selectOpportunity(op) {
+    if (selectedOpportunity) meetingData[selectedOpportunity] = getEntries();
+    selectedOpportunity = op;
+    document.getElementById('meetingDetails').style.display = 'block';
+    updateBadges();
+    renderEntries(meetingData[op] || []);
+    loadItems(op);
+    document.querySelectorAll('#opportunitiesList a').forEach(a => a.classList.toggle('active', a.textContent === op));
+  }
+
+  function renderEntries(entries) {
+    const container = document.getElementById('meetingEntries');
+    container.innerHTML = '';
+    entries.forEach(entry => addEntry(entry));
+  }
+
+  function getEntries() {
+    return [...document.querySelectorAll('.meeting-entry')].map(div => ({
+      opportunity: div.querySelector('[name="opportunity"]').value,
+      agenda: div.querySelector('[name="agenda"]').value,
+      visited_department: div.querySelector('[name="visited_department"]').value,
+      contact_person: div.querySelector('[name="contact_person"]').value,
+      notes: div.querySelector('[name="notes"]').value
+    }));
+  }
+
+  function addEntry(data = {}) {
+    const container = document.getElementById('meetingEntries');
+    const div = document.createElement('div');
+    div.className = 'meeting-entry meeting-section';
+    div.innerHTML = `
+      <div class="meeting-grid">
+        <div class="form-group">
+          <label>Opportunity</label>
+          <input name="opportunity" class="input-opportunity" placeholder="Opportunity" value="\${data.opportunity || selectedOpportunity || ''}" />
+        </div>
+
+        <div class="form-group">
+          <label>Visited Department <span class="muted">(required)</span></label>
+          <select name="visited_department" required class="input-contact">
+            <option value="" \${!data.visited_department ? 'selected' : ''}>Select Visited Department</option>
+            <option value="Management/Purchaser" \${data.visited_department === 'Management/Purchaser' ? 'selected' : ''}>Management/Purchaser</option>
+            <option value="Instrumentation" \${data.visited_department === 'Instrumentation' ? 'selected' : ''}>Instrumentation</option>
+            <option value="User" \${data.visited_department === 'User' ? 'selected' : ''}>User</option>
+          </select>
+        </div>
+
+        <div class="form-group" style="grid-column: 1 / -1;">
+          <label>Contact Person</label>
+          <input name="contact_person" class="input-contact" placeholder="Contact Person" value="\${data.contact_person || ''}" />
+        </div>
+
+        <div class="form-group" style="grid-column: 1 / -1;">
+          <label>Notes</label>
+          <textarea name="notes" class="input-agenda" placeholder="Notes">\${data.notes || ''}</textarea>
+        </div>
+      </div>
+
+      <div class="meeting-actions">
+        <button type="button" class="btn btn-outline remove-entry" aria-label="Remove meeting entry">Remove</button>
+      </div>
+
+      <input type="hidden" name="agenda" value="Field Visit" />
+    `;
+    div.querySelector('.remove-entry').onclick = () => {
+      div.remove();
+      updateMeetingFooter();
+    };
+    container.appendChild(div);
+    updateMeetingFooter();
+  }
+
+  document.getElementById('addEntry').onclick = () => addEntry();
+  document.getElementById('saveEntries').onclick = () => {
+    if (!selectedOpportunity) {
+      updateStatus('Please select an opportunity first.', true);
+      return;
+    }
+    meetingData[selectedOpportunity] = getEntries();
+    updateStatus(`Saved ${meetingData[selectedOpportunity].length} meeting entries.`);
+    updateMeetingFooter(true);
+  };
+
+  // ===== Geo (unchanged) =====
+  async function getGeoSafe() {
+    return new Promise(resolve => {
+      if (!navigator.geolocation) return resolve({});
+      navigator.geolocation.getCurrentPosition(async pos => {
+        const latitude = pos.coords.latitude;
+        const longitude = pos.coords.longitude;
+        let addr = {};
+        try {
+          const r = await fetch(
+            `https://nominatim.openstreetmap.org/reverse?format=json&lat=${latitude}&lon=${longitude}`
+          );
+          addr = (await r.json()).address || {};
+        } catch {}
+        resolve({
+          latitude,
+          longitude,
+          city: addr.city || addr.town || '',
+          state: addr.state || '',
+          area: addr.suburb || addr.village || ''
+        });
+      }, _err => resolve({}));
+    });
+  }
+
+  // collect all meeting entries per opportunity
+  function collectAllMeetingEntries() {
+    if (selectedOpportunity) {
+      meetingData[selectedOpportunity] = getEntries();
+    }
+    const byOpp = {};
+    Object.entries(meetingData || {}).forEach(([opp, entries]) => {
+      const cleaned = (entries || [])
+        .map(e => {
+          const o = (e.opportunity || opp || '').trim();
+          return {
+            opportunity: o,
+            agenda: (e.agenda || 'Field Visit').trim(),
+            visited_department: (e.visited_department || '').trim(),
+            contact_person: (e.contact_person || '').trim(),
+            notes: (e.notes || '').trim()
+          };
+        })
+        .filter(e => e.opportunity && e.visited_department);
+      if (cleaned.length) byOpp[opp] = cleaned;
+    });
+    return byOpp;
+  }
+
+  // ===== Assign-To helpers =====
+  function extractEmailFromDisplay(s) {
+    if (!s) return '';
+    const m = s.match(/<\s*([^>]+)\s*>/);
+    if (m && m[1]) return m[1].trim();
+    if (/\S+@\S+\.\S+/.test(s)) return s.trim();
+    return '';
+  }
+
+  // ===== Punch Out =====
+  async function doPunchOut() {
+    updateStatus('Punching OUT...');
+
+    // Ensure Assign-To is a valid person (if user typed and didn't click)
+    if (typeof window.__resolveAssignEmailBeforeSubmit === 'function') {
+      const ok = window.__resolveAssignEmailBeforeSubmit();
+      if (!ok) return; // stop until user fixes Assign To
+    }
+
+    const geo = await getGeoSafe();
+
+    const base = {
+      log_type: 'OUT',
+      time: new Date().toISOString(),
+      device_id: navigator.userAgent,
+      longitude: Number.isFinite(geo.longitude) ? geo.longitude : 0,
+      latitude:  Number.isFinite(geo.latitude)  ? geo.latitude  : 0,
+      city:  geo.city  || '',
+      state: geo.state || '',
+      area:  geo.area  || ''
+    };
+
+    const byOpp = collectAllMeetingEntries();
+
+    const totalMeetings = Object.values(byOpp).reduce((n, arr) => n + arr.length, 0);
+    if (totalMeetings > 0 && !selectedCustomer) {
+      updateStatus('Please select a customer before punching out.', true);
+      return;
+    }
+
+    const singleMeetings = selectedOpportunity ? (meetingData[selectedOpportunity] || []) : [];
+
+    const hadIncomplete =
+      (selectedOpportunity && singleMeetings.some(e => !e.visited_department)) ||
+      Object.values(meetingData).some(list => (list || []).some(e => !e.visited_department));
+    if (hadIncomplete) console.warn('Some entries skipped because "Visited Department" was empty.');
+
+    const remarkFree = !selectedCustomer
+      ? (document.getElementById('freeRemark')?.value || '').trim()
+      : '';
+
+    const assign_to_email = (selectedAssignEmail || '').trim();
+
+    const payload = {
+      ...base,
+      customer: selectedCustomer || '',
+      opportunity: selectedOpportunity || '',
+      meeting_details: singleMeetings,
+      meeting_details_by_opportunity: byOpp,
+      remark_free: remarkFree,
+      assign_to_email,
+    };
+
+    try {
+      const csrftoken = document.cookie.match(/(^|;)\s*csrftoken=([^;]+)/)?.pop();
+      const res = await fetch("{% url 'punch' %}", {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-CSRFToken': csrftoken },
+        body: JSON.stringify(payload)
+      });
+      const r = await res.json().catch(() => ({}));
+      if (res.ok) {
+        updateStatus('Punch OUT saved!');
+        if (r.next_url) {
+          window.location.href = r.next_url;
+          return;
+        }
+      } else {
+        updateStatus(r.detail || `Error during punch out. (${res.status})`, true);
+      }
+    } catch {
+      updateStatus('Network error occurred. Please try again.', true);
+    }
+  }
+
+  document.getElementById('btn-out').onclick = doPunchOut;
+
+  // ===== Customer location update (unchanged) =====
+  const btnUpdateLoc = document.getElementById('btn-update-location');
+
+  function onCustomerChosen() {
+    updateBadges();
+    btnUpdateLoc.disabled = !selectedCustomer;
+    updateRemarkVisibility();
+  }
+
+  async function getGPS() {
+    return new Promise((resolve, reject) => {
+      if (!navigator.geolocation) return reject(new Error('Geolocation not supported'));
+      navigator.geolocation.getCurrentPosition(
+        pos => resolve({ lat: pos.coords.latitude, lon: pos.coords.longitude }),
+        err => reject(err),
+        { enableHighAccuracy: true, timeout: 15000 }
+      );
+    });
+  }
+
+  btnUpdateLoc.addEventListener('click', async () => {
+    if (!selectedCustomer) {
+      updateStatus('Please pick a customer first.', true);
+      return;
+    }
+    updateStatus('Getting GPS…');
+    try {
+      const { lat, lon } = await getGPS();
+      const csrftoken = document.cookie.match(/(^|;)\s*csrftoken=([^;]+)/)?.pop();
+      const r = await fetch("{% url 'update_customer_location' %}", {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-CSRFToken': csrftoken },
+        body: JSON.stringify({
+          customer: selectedCustomer,
+          latitude: lat,
+          longitude: lon
+        })
+      });
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(j.error || 'Update failed');
+      updateStatus(j.message || 'Location submitted for admin approval.');
+    } catch (e) {
+      updateStatus(e.message || 'Failed to update location', true);
+    }
+  });
+
+  function updateStatus(msg, isError = false) {
+    const el = document.getElementById('status');
+    el.textContent = msg;
+    el.className = 'status' + (isError ? ' error' : ' success');
+  }
+
+  // ===== Assign-To (robust fetch + UI) =====
+  async function initAssignTo() {
+    const wrap = document.getElementById('assignDropdownWrap');
+    const inp  = document.getElementById('assignInput');
+    const dd   = document.getElementById('assignDropdownList');
+    const mini = document.getElementById('assignMiniStatus');
+
+    let people = [];
+    let loadedFrom = 'api';
+
+    async function loadPeople() {
+      // 1) Try API
+      try {
+        const r = await fetch("{% url 'get_employees' %}", {
+          credentials: 'same-origin',
+          headers: { 'Accept': 'application/json' }
+        });
+        const text = await r.text();
+        let j;
+        try {
+          j = JSON.parse(text);
+        } catch {
+          console.warn('get_employees returned non-JSON:', text.slice(0, 200));
+          j = null;
+        }
+        if (j && Array.isArray(j.employees) && j.employees.length) {
+          return j.employees
+            .filter(p => p && p.email && p.label)
+            .map(p => ({ email: String(p.email).trim(), label: String(p.label).trim() }));
+        }
+        if (j && Array.isArray(j.emails) && j.emails.length) {
+          // legacy shape
+          return j.emails.filter(Boolean).map(e => ({ email: String(e), label: String(e) }));
+        }
+      } catch (e) {
+        console.warn('get_employees error:', e);
+      }
+      // 2) Fallback to server-injected emails, if any
+      loadedFrom = 'fallback';
+      if (Array.isArray(employeesEmails) && employeesEmails.length) {
+        return employeesEmails.filter(Boolean).map(e => ({ email: String(e), label: String(e) }));
+      }
+      return [];
+    }
+
+    people = await loadPeople();
+
+    // update mini-status
+    if (people.length) {
+      mini.textContent = `Loaded ${people.length} people${loadedFrom==='fallback' ? ' (fallback)' : ''}.`;
+    } else {
+      mini.textContent = 'No employees loaded. You can still type, but suggestions are empty.';
+    }
+
+    let filtered = people.slice();
+    let highlighted = -1;
+
+    function renderItem(person, isHi) {
+      const div = document.createElement('div');
+      div.className = 'dropdown-item';
+      div.innerHTML = `
+        <div class="assign-row">
+          <div class="assign-name">${person.label}</div>
+          <div class="assign-email muted">${person.email}</div>
+        </div>`;
+      div.setAttribute('role', 'option');
+      div.setAttribute('aria-selected', isHi ? 'true' : 'false');
+      if (isHi) div.classList.add('highlighted');
+      div.addEventListener('click', () => selectAssign(person));
+      return div;
+    }
+
+    function showList(arr) {
+      dd.innerHTML = '';
+      if (!arr.length) {
+        const no = document.createElement('div');
+        no.className = 'no-results';
+        no.textContent = 'No matches';
+        dd.appendChild(no);
+      } else {
+        arr.forEach((p, i) => dd.appendChild(renderItem(p, i === highlighted)));
+      }
+      dd.classList.add('show');
+      wrap.classList.add('dropdown-open');
+      inp.setAttribute('aria-expanded', 'true');
+    }
+
+    function hideList() {
+      dd.classList.remove('show');
+      wrap.classList.remove('dropdown-open');
+      highlighted = -1;
+      inp.setAttribute('aria-expanded', 'false');
+    }
+
+    function selectAssign(person) {
+      selectedAssignEmail = person.email;                   // used in payload
+      inp.value = `${person.label} <${person.email}>`;      // friendly display
+      hideList();
+    }
+
+    // When leaving the field without clicking, try to resolve typed value to a known email.
+    window.__resolveAssignEmailBeforeSubmit = function() {
+      if (selectedAssignEmail) return true; // already chosen
+      const typed = extractEmailFromDisplay(inp.value);
+      if (!typed) return true; // optional field, nothing typed
+      const match = people.find(p => (p.email || '').toLowerCase() === typed.toLowerCase());
+      if (match) {
+        selectedAssignEmail = match.email;
+        inp.value = `${match.label} <${match.email}>`;
+        return true;
+      }
+      updateStatus('Please pick a valid person from suggestions for "Assign To".', true);
+      setTimeout(() => updateStatus('', false), 3000);
+      return false;
+    };
+
+    // Open immediately so you can see suggestions
+    inp.addEventListener('focus', () => showList(filtered));
+    inp.addEventListener('blur',  () => {
+      setTimeout(hideList, 120);
+      // try to resolve on blur too (non-blocking here)
+      const typed = extractEmailFromDisplay(inp.value);
+      if (typed && !selectedAssignEmail) {
+        const match = people.find(p => (p.email || '').toLowerCase() === typed.toLowerCase());
+        if (match) {
+          selectedAssignEmail = match.email;
+          inp.value = `${match.label} <${match.email}>`;
+        }
+      }
+    });
+    inp.addEventListener('input', e => {
+      const q = e.target.value.toLowerCase().trim();
+      filtered = people.filter(p =>
+        (p.label || '').toLowerCase().includes(q) ||
+        (p.email || '').toLowerCase().includes(q)
+      );
+      highlighted = -1;
+      showList(filtered);
+    });
+    inp.addEventListener('keydown', e => {
+      const items = [...dd.querySelectorAll('.dropdown-item')];
+      if (['ArrowDown','ArrowUp'].includes(e.key)) {
+        e.preventDefault();
+        if (!items.length) return;
+        highlighted = e.key === 'ArrowDown'
+          ? Math.min(highlighted + 1, items.length - 1)
+          : Math.max(highlighted - 1, 0);
+        items.forEach((el, i) => {
+          el.classList.toggle('highlighted', i === highlighted);
+          el.setAttribute('aria-selected', i === highlighted ? 'true' : 'false');
+        });
+        items[highlighted]?.scrollIntoView({block:'nearest'});
+      } else if (e.key === 'Enter') {
+        e.preventDefault();
+        if (highlighted >= 0 && filtered[highlighted]) {
+          selectAssign(filtered[highlighted]);
+        } else {
+          // No item highlighted -> accept typed value if it matches a known email
+          const typed = extractEmailFromDisplay(inp.value);
+          if (typed) {
+            const match = people.find(p => (p.email || '').toLowerCase() === typed.toLowerCase());
+            if (match) selectAssign(match);
+          }
+          hideList();
+        }
+      } else if (e.key === 'Escape') {
+        hideList();
+      }
+    });
+    document.addEventListener('mousedown', e => { if (!wrap.contains(e.target)) hideList(); });
+  }
+</script>
+</body>
+</html>

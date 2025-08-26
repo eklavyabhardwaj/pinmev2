@@ -1,0 +1,301 @@
+{% load static %}
+<!DOCTYPE html>
+<html>
+<head>
+  <link rel="icon" type="image/x-icon" href="{% static 'favicon.ico' %}">
+  <title>PinMe - Punch In</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+
+  <link rel="stylesheet" href="{% static 'pinme.css' %}">
+</head>
+<body>
+  <div class="punch-container">
+    <h1 id="greeting">Good Day {{ employee_name }}</h1>
+    <p class="sub">Customers within 5 km of your current location</p>
+    <iframe id="map" src="https://maps.google.com/maps?q=20.5937,78.9629&z=5&output=embed" loading="lazy" allowfullscreen></iframe>
+    <div class = "toolbar">
+
+      <div class="search">
+        <input id="searchBox" type="text" placeholder="Search customer in list…">
+      </div>
+    </div>
+    <div class="toolbar">
+      <button id="btn-in-generic" class="btn" title="Punch in without selecting a listed customer">
+        Punch In (New Customer)
+      </button>
+
+          <form action="{% url 'energy_points' %}" method="get" style="display:inline;">
+  <button type="submit" class="btn btn-secondary">Energy Points</button>
+</form>
+
+    </div>
+
+
+
+    <ul id="custList" class="list"></ul>
+    <div id="status" class="status"></div>
+
+    <div class="copyright" class="copyright">
+      &copy; 2025 Electrolab India Pvt Ltd. All rights reserved.
+    </div>
+  </div>
+
+  <form method="post" action="{% url 'logout' %}" class="top-right">
+    {% csrf_token %}
+    <button type="submit" class="btn btn-danger">
+      Logout
+    </button>
+  </form>
+
+
+  <!-- Items dialog -->
+  <dialog id="itemsDialog" aria-labelledby="dlgTitle">
+    <h3 id="dlgTitle" class="dlg-title">Items</h3>
+    <div id="dlgContent" class="dlg-content"></div>
+    <form method="dialog">
+      <button class="btn" style="width:100%">Close</button>
+    </form>
+  </dialog>
+
+  <script>
+    const statusEl   = document.getElementById('status');
+    const listEl     = document.getElementById('custList');
+    const searchBox  = document.getElementById('searchBox');
+    const btnNoCust  = document.getElementById('btn-in-generic');
+
+    // dialog handles
+    const itemsDialog = document.getElementById('itemsDialog');
+    const dlgTitle    = document.getElementById('dlgTitle');
+    const dlgContent  = document.getElementById('dlgContent');
+
+function showItemsDialog(customerName, itemsArray) {
+  dlgTitle.textContent = `Items with Open Opps ${customerName || 'Customer'}`;
+  const items = (itemsArray || []).filter(Boolean);
+
+  if (items.length) {
+    // Render in list view
+    dlgContent.innerHTML = `
+      <ul class="list">
+        ${items.map(i => `<li>${escapeHtml(i)}</li>`).join('')}
+      </ul>
+    `;
+  } else {
+    dlgContent.textContent = 'No items found in open opportunities.';
+  }
+
+  if (typeof itemsDialog.showModal === 'function') {
+    itemsDialog.showModal();
+  } else {
+    alert(`${dlgTitle.textContent}\n\n${items.join(', ') || 'No items found.'}`);
+  }
+}
+
+
+    function escapeHtml(s) {
+      return String(s).replace(/[&<>"']/g, ch => ({
+        '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'
+      }[ch]));
+    }
+
+    function setGreeting() {
+      const h = new Date().getHours();
+      const g = h < 12 ? 'Good Morning' : h < 17 ? 'Good Afternoon' : 'Good Evening';
+      document.getElementById('greeting').textContent = `${g} {{ employee_name }}`;
+    }
+    function setStatus(msg, type='') {
+      statusEl.textContent = msg;
+      statusEl.className = 'status ' + (type || '');
+    }
+
+    async function fetchNearby(lat, lon) {
+      const controller = new AbortController();
+      const t = setTimeout(() => controller.abort(), 15000);
+      try {
+        const url = `{% url 'nearby_customers' %}?lat=${encodeURIComponent(lat)}&lon=${encodeURIComponent(lon)}`;
+        const r = await fetch(url, { signal: controller.signal });
+        if (!r.ok) throw new Error(await r.text());
+        return await r.json();
+      } finally {
+        clearTimeout(t);
+      }
+    }
+
+    function fmtAmount(amount, currency) {
+      const num = typeof amount === 'number' ? amount : parseFloat(amount || 0);
+      if (currency) {
+        try {
+          return new Intl.NumberFormat(undefined, { style: 'currency', currency, maximumFractionDigits: 2 }).format(num);
+        } catch {}
+      }
+      return (num?.toLocaleString?.() ?? num);
+    }
+
+    function renderList(customers) {
+      listEl.innerHTML = '';
+      if (!customers.length) {
+        listEl.innerHTML = '<li class="muted" style="text-align:center;padding:8px">No customers found within 5 km.</li>';
+        return;
+      }
+      customers.forEach(c => {
+        const li = document.createElement('li');
+        li.className = 'card';
+        li.dataset.name = (c.customer_name || '').toLowerCase();
+
+        // clicking the card opens the items dialog
+        li.addEventListener('click', () => {
+          // use array if provided; else fall back to joined text if backend sent it
+          const items = (c.open_opportunity_items && c.open_opportunity_items.length)
+            ? c.open_opportunity_items
+            : (c.open_opportunity_items_text ? String(c.open_opportunity_items_text).split(/\s*,\s*/) : []);
+          showItemsDialog(c.customer_name, items);
+        });
+
+        const info = document.createElement('div');
+        info.className = 'info';
+        const amountText = fmtAmount(c.open_opportunity_amount, c.currency);
+        const count = c.open_opportunity_count || 0;
+        info.innerHTML = `
+          <span class="title">${escapeHtml(c.customer_name || '')}</span>
+          <span class="muted">${c.distance_km} km away</span>
+          <span class="muted">Open Opps: ${count}</span>
+          <span class="muted">Total Amount: ${escapeHtml(amountText)}${c.currency ? '' : ''}</span>
+        `;
+
+        const actions = document.createElement('div');
+        actions.className = 'actions';
+
+        const dir = document.createElement('a');
+        dir.href = `https://www.google.com/maps/dir/?api=1&destination=${c.latitude},${c.longitude}`;
+        dir.target = '_blank';
+        dir.rel = 'noopener';
+        dir.className = 'btn link';
+        dir.textContent = 'Directions';
+        // prevent dialog when pressing the link
+        dir.addEventListener('click', e => e.stopPropagation());
+
+        const punch = document.createElement('button');
+        punch.className = 'btn';
+        punch.textContent = 'Punch In';
+        punch.onclick = (e) => { e.stopPropagation(); doPunchIn(c.name, punch); };
+
+        actions.appendChild(dir);
+        actions.appendChild(punch);
+
+        li.appendChild(info);
+        li.appendChild(actions);
+        listEl.appendChild(li);
+      });
+    }
+
+    function filterList(q) {
+      const ql = q.trim().toLowerCase();
+      [...listEl.children].forEach(li => {
+        li.style.display = li.dataset.name.includes(ql) ? '' : 'none';
+      });
+    }
+
+    async function doPunchIn(customerName /* optional */, triggerBtn /* optional */) {
+      setStatus('Punching IN…', 'loading');
+      btnNoCust.disabled = true;
+      if (triggerBtn) triggerBtn.disabled = true;
+
+      if (!navigator.geolocation) {
+        setStatus('Geolocation not supported', 'error');
+        btnNoCust.disabled = false;
+        if (triggerBtn) triggerBtn.disabled = false;
+        return;
+      }
+
+      navigator.geolocation.getCurrentPosition(async pos => {
+        const latitude = pos.coords.latitude;
+        const longitude = pos.coords.longitude;
+
+        // Update mini-map to current location
+        const map = document.getElementById('map');
+        map.src = `https://maps.google.com/maps?q=${latitude},${longitude}&z=16&output=embed`;
+
+        // Best effort reverse geocode (non-blocking)
+        let addr = {};
+        try {
+          const geo = await fetch(
+            `https://nominatim.openstreetmap.org/reverse?format=json&lat=${latitude}&lon=${longitude}`
+          ).then(r => r.json());
+          addr = geo.address || {};
+        } catch {}
+
+        const payload = {
+          log_type: 'IN',
+          time: new Date().toISOString(),
+          device_id: navigator.userAgent,
+          longitude, latitude,
+          city: addr.city || addr.town || '',
+          state: addr.state || '',
+          area: addr.suburb || addr.village || '',
+          customer: customerName || '' // optional
+        };
+
+        try {
+          const csrftoken = document.cookie.match(/(^|;)\s*csrftoken=([^;]+)/)?.pop();
+          const res = await fetch("{% url 'punch' %}", {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'X-CSRFToken': csrftoken },
+            body: JSON.stringify(payload)
+          });
+          const result = await res.json();
+          if (res.ok) {
+            setStatus('Punch IN recorded successfully', 'success');
+
+            if (result.next_url) {
+              // SAFE: set/replace ?customer using URL API
+              const u = new URL(result.next_url, location.origin);
+              if (customerName) u.searchParams.set('customer', customerName);
+              window.location.href = u.toString();
+              return;
+            }
+          } else {
+            setStatus(`Error: ${result.detail || res.status}`, 'error');
+          }
+        } catch {
+          setStatus('Network error occurred', 'error');
+        } finally {
+          btnNoCust.disabled = false;
+          if (triggerBtn) triggerBtn.disabled = false;
+        }
+      }, err => {
+        setStatus('Geolocation error: ' + err.message, 'error');
+        btnNoCust.disabled = false;
+        if (triggerBtn) triggerBtn.disabled = false;
+      });
+    }
+
+    // Page init
+    window.addEventListener('DOMContentLoaded', async () => {
+      setGreeting();
+
+      if (!navigator.geolocation) {
+        setStatus('Geolocation not supported', 'error');
+        return;
+      }
+
+      setStatus('Loading your location…', 'loading');
+      navigator.geolocation.getCurrentPosition(async pos => {
+        const lat = pos.coords.latitude, lon = pos.coords.longitude;
+        document.getElementById('map').src = `https://maps.google.com/maps?q=${lat},${lon}&z=14&output=embed`;
+        try {
+          setStatus('Finding nearby customers…', 'loading');
+          const data = await fetchNearby(lat, lon);
+          renderList(data.customers || []);
+          setStatus('Nearby customers loaded.');
+        } catch (e) {
+          setStatus('Failed to load customers', 'error');
+        }
+      }, err => setStatus('Unable to retrieve location: ' + err.message, 'error'));
+    });
+
+    // UI events
+    document.getElementById('btn-in-generic').addEventListener('click', () => doPunchIn(null, btnNoCust));
+    searchBox.addEventListener('input', e => filterList(e.target.value));
+  </script>
+</body>
+</html>
