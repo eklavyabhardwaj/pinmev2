@@ -8,12 +8,22 @@
 
 
   <link rel="stylesheet" href="{% static 'pinme.css' %}">
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" crossorigin="">
+  <style>
+    #map { width:100%; height:260px; border-radius:14px; overflow:hidden; z-index:0; }
+    .leaflet-popup-content strong { font-size:13px; }
+    .user-dot {
+      width:14px; height:14px;
+      background:#2563eb; border:2px solid #fff;
+      border-radius:50%; box-shadow:0 0 0 4px rgba(37,99,235,.25);
+    }
+  </style>
 </head>
 <body>
   <div class="punch-container">
     <h1 id="greeting">Good Day {{ employee_name }}</h1>
     <p class="sub" id="listSubtitle">Customers within 5 km of your current location</p>
-    <iframe id="map" src="https://maps.google.com/maps?q=20.5937,78.9629&z=5&output=embed" loading="lazy" allowfullscreen></iframe>
+    <div id="map"></div>
     <div class="toolbar">
       <div class="search" style="position:relative;flex:1;">
         <div class="dropdown-wrap" id="searchDropdownWrap">
@@ -52,11 +62,45 @@
   </form>
 
 
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" crossorigin=""></script>
   <script>
     const statusEl   = document.getElementById('status');
     const listEl     = document.getElementById('custList');
     const searchBox  = document.getElementById('searchBox');
     const btnNoCust  = document.getElementById('btn-in-generic');
+
+    // ── Leaflet map ──
+    let leafMap = null, userMarker = null, custMarkers = [];
+
+    function initMap(lat, lon) {
+      if (leafMap) { leafMap.setView([lat, lon], 14); return; }
+      leafMap = L.map('map', { zoomControl: true, attributionControl: false })
+                 .setView([lat, lon], 14);
+      L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+        maxZoom: 19
+      }).addTo(leafMap);
+      L.control.attribution({ prefix: '© <a href="https://openstreetmap.org">OSM</a>' }).addTo(leafMap);
+    }
+
+    function setUserPin(lat, lon) {
+      if (!leafMap) return;
+      const icon = L.divIcon({ className: '', html: '<div class="user-dot"></div>', iconSize: [14,14], iconAnchor: [7,7] });
+      if (userMarker) { userMarker.setLatLng([lat, lon]); }
+      else { userMarker = L.marker([lat, lon], { icon, zIndexOffset: 1000 }).addTo(leafMap).bindPopup('📍 You are here'); }
+    }
+
+    function setCustomerPins(customers) {
+      custMarkers.forEach(m => leafMap && leafMap.removeLayer(m));
+      custMarkers = [];
+      if (!leafMap) return;
+      customers.forEach(c => {
+        if (c.latitude == null || c.longitude == null) return;
+        const m = L.marker([c.latitude, c.longitude])
+          .addTo(leafMap)
+          .bindPopup(`<strong>${c.customer_name || ''}</strong>${c.distance_km != null ? `<br><span style="color:#6b7280;font-size:12px">${c.distance_km} km away</span>` : ''}`);
+        custMarkers.push(m);
+      });
+    }
 
     function escapeHtml(s) {
       return String(s).replace(/[&<>"']/g, ch => ({
@@ -200,6 +244,10 @@
         hideDD();
         subtitle.textContent = `Results for "${c.customer_name}"`;
         renderList([c], 'No customers found.');
+        setCustomerPins([c]);
+        if (c.latitude != null && c.longitude != null && leafMap) {
+          leafMap.setView([c.latitude, c.longitude], 15);
+        }
         setStatus('');
       }
 
@@ -210,6 +258,7 @@
           hideDD();
           subtitle.textContent = 'Customers within 5 km of your current location';
           renderList(nearbyCustomers);
+          setCustomerPins(nearbyCustomers);
           return;
         }
         searchTimer = setTimeout(async () => {
@@ -222,6 +271,7 @@
             showDD(lastResults);
             subtitle.textContent = `Search results for "${q}"`;
             renderList(lastResults, 'No customers found.');
+            setCustomerPins(lastResults);
             setStatus('');
           } catch {
             setStatus('Search failed', 'error');
@@ -268,9 +318,9 @@
         const latitude = pos.coords.latitude;
         const longitude = pos.coords.longitude;
 
-        // Update mini-map to current location
-        const map = document.getElementById('map');
-        map.src = `https://maps.google.com/maps?q=${latitude},${longitude}&z=16&output=embed`;
+        // Re-centre map on user for punch-in
+        if (leafMap) { leafMap.setView([latitude, longitude], 16); }
+        setUserPin(latitude, longitude);
 
         const payload = {
           log_type: 'IN',
@@ -327,18 +377,23 @@
       setStatus('Loading your location…', 'loading');
       navigator.geolocation.getCurrentPosition(async pos => {
         const lat = pos.coords.latitude, lon = pos.coords.longitude;
-        document.getElementById('map').src = `https://maps.google.com/maps?q=${lat},${lon}&z=14&output=embed`;
+        initMap(lat, lon);
+        setUserPin(lat, lon);
         try {
           setStatus('Finding nearby customers…', 'loading');
           const data = await fetchNearby(lat, lon);
           nearbyCustomers = data.customers || [];
           renderList(nearbyCustomers);
+          setCustomerPins(nearbyCustomers);
           setStatus('Nearby customers loaded.');
         } catch (e) {
           setStatus('Failed to load customers', 'error');
         }
-      }, err => setStatus('Unable to retrieve location: ' + err.message, 'error'),
-         { maximumAge: 30000, timeout: 12000 });
+      }, err => {
+        // Still init map on India even if location denied
+        initMap(20.5937, 78.9629);
+        setStatus('Unable to retrieve location: ' + err.message, 'error');
+      }, { maximumAge: 30000, timeout: 12000 });
     });
 
     // UI events
