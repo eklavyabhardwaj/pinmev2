@@ -2,10 +2,10 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <link rel="icon" type="image/x-icon" href="{% static 'favicon.ico' %}">
+  <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><defs><linearGradient id=%22g%22 x1=%220%22 y1=%220%22 x2=%221%22 y2=%221%22><stop offset=%220%25%22 stop-color=%22%230f766e%22/><stop offset=%22100%25%22 stop-color=%22%23374151%22/></linearGradient></defs><rect width=%22100%22 height=%22100%22 rx=%2222%22 fill=%22url(%23g)%22/><path d=%22M50,18 C38,18 28,28 28,40 C28,56 50,82 50,82 C50,82 72,56 72,40 C72,28 62,18 50,18 Z%22 fill=%22white%22/><circle cx=%2250%22 cy=%2239%22 r=%2210%22 fill=%22%230f766e%22/></svg>">
   <meta charset="UTF-8" />
   <title>PinMe - U&PO</title>
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
   <link rel="stylesheet" href="{% static 'pinme.css' %}">
   <style>
     /* helper styles for Assign-To rows + tiny status */
@@ -13,11 +13,126 @@
     .assign-name{font-weight:600}
     .assign-email{font-size:.9em}
     .mini-status{font-size:.85em;color:#6b7280;margin-top:6px}
+
+    /* ── Mobile overrides ── */
+
+    /* Allow natural top-to-bottom scroll instead of centering */
+    body {
+      align-items: flex-start;
+      padding: 0;
+      min-height: 100dvh;
+    }
+
+    .punch-container {
+      width: 100%;
+      min-height: 100dvh;
+      border-radius: 0;
+      border: none;
+      box-shadow: none;
+      padding: 20px 16px;
+      /* iPhone safe areas */
+      padding-top: max(20px, env(safe-area-inset-top));
+      padding-bottom: max(100px, env(safe-area-inset-bottom));
+      padding-left: max(16px, env(safe-area-inset-left));
+      padding-right: max(16px, env(safe-area-inset-right));
+    }
+
+    /* Page header row: title left, logout right */
+    .page-header {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 12px;
+      margin-bottom: 20px;
+    }
+    .page-header h1 {
+      margin-bottom: 0;
+      font-size: 22px;
+      flex: 1;
+    }
+    .page-header h1::after { width: 32px; }
+
+    /* Logout inside header on mobile */
+    #logout-btn-mobile {
+      flex-shrink: 0;
+      font-size: 13px;
+      padding: 8px 14px;
+      height: auto;
+    }
+
+    /* Hide the absolute-positioned form on mobile */
+    .top-right { display: none; }
+
+    /* Comfortable tap targets */
+    input[type="text"],
+    input[type="password"],
+    select, textarea {
+      font-size: 16px !important; /* prevents iOS zoom */
+      padding: 13px 14px;
+      min-height: 48px;
+    }
+
+    .dropdown-list .dropdown-item {
+      padding: 14px 16px;
+      font-size: 15px;
+    }
+
+    /* Punch Out button — big and prominent */
+    #btn-out {
+      width: 100%;
+      min-height: 54px;
+      font-size: 17px;
+      letter-spacing: .2px;
+      border-radius: 14px;
+      margin-top: 8px;
+    }
+
+    /* Update location button */
+    #btn-update-location {
+      width: 100%;
+      min-height: 46px;
+      font-size: 14px;
+    }
+
+    /* Status bar */
+    #status { margin-top: 14px; font-size: 14px; }
+
+    /* FAB safe area on iPhone */
+    #wa-fab-wrap {
+      bottom: max(24px, env(safe-area-inset-bottom, 24px));
+      right: max(20px, env(safe-area-inset-right, 20px));
+    }
+
+    /* On larger phones/tablets restore card look */
+    @media (min-width: 540px) {
+      body { align-items: center; padding: clamp(16px, 4vw, 40px); }
+      .punch-container {
+        min-height: auto;
+        width: min(600px, 100%);
+        border-radius: 20px;
+        border: 1px solid rgba(255,255,255,.9);
+        box-shadow: 0 12px 40px rgba(15,23,42,.12), 0 4px 12px rgba(15,23,42,.06);
+        padding: clamp(24px, 5vw, 44px);
+      }
+      .page-header { display: none; }
+      #greeting-desktop { display: block !important; }
+      .top-right { display: block; }
+      h1 { font-size: clamp(22px, 3vw, 28px); margin-bottom: 20px; }
+    }
   </style>
 </head>
 <body>
 <div class="punch-container" role="main" aria-label="Select Customer and Punch Out">
-  <h1 id="greeting">Select Customer & Punch Out</h1>
+  <!-- Mobile: title + logout in one row -->
+  <div class="page-header">
+    <h1 id="greeting">Select Customer &amp; Punch Out</h1>
+    <form method="post" action="{% url 'logout' %}">
+      {% csrf_token %}
+      <button type="submit" class="btn btn-danger" id="logout-btn-mobile">Logout</button>
+    </form>
+  </div>
+  <!-- Desktop heading (hidden on mobile via CSS) -->
+  <h1 id="greeting-desktop" style="display:none">Select Customer &amp; Punch Out</h1>
 
   <div class="form-group" id="customerSearchBlock">
     <label for="customerInput">Customer</label>
@@ -27,11 +142,9 @@
       <div class="dropdown-list" id="dropdownList" role="listbox" tabindex="-1"></div>
     </div>
 
-    <div class="buttons">
-      <button id="btn-update-location" type="button" disabled>
-        Update Address through GPS
-      </button>
-    </div>
+    <button id="btn-update-location" type="button" disabled style="margin-top:10px;">
+      Update Address through GPS
+    </button>
   </div>
 
   <!-- Remark (visible when NO customer is selected) -->
@@ -57,45 +170,13 @@
     </div>
   </div>
 
-  <div class="form-group">
-    <label>Opportunities</label>
-    <ul id="opportunitiesList"></ul>
-  </div>
-
-  <div class="form-group">
-    <label>Items for Opportunity</label>
-    <ul id="itemsContainer"></ul>
-  </div>
-
-  <section id="meetingDetails" class="meeting-details" aria-label="Meeting details form" style="display:none;">
-    <div class="meeting-header">
-      <h2 class="meeting-title">Meeting Details</h2>
-      <div class="meeting-meta">
-        <span class="meta-badge" id="badgeOpportunity">No opportunity</span>
-        <span class="meta-badge" id="badgeCustomer">No customer</span>
-      </div>
-    </div>
-
-    <div id="meetingEntries"></div>
-
-    <div class="meeting-actions">
-      <button id="addEntry" class="btn btn-outline" type="button">Add Meeting Entry</button>
-      <button id="saveEntries" class="btn btn-primary" type="button">Save Entries</button>
-    </div>
-
-    <div class="meeting-footer">
-      <span id="meetingCount">0 entries</span>
-      <span id="lastSaved" class="muted">Not saved yet</span>
-    </div>
-  </section>
-
   <div class="buttons">
     <button id="btn-out" class="pulse" type="button">Punch Out</button>
   </div>
 
   <div class="status" id="status" role="alert" aria-live="assertive"></div>
   <div class="copyright">
-    &copy; 2025 Electrolab India Pvt Ltd
+    &copy; 2026 Electrolab India Pvt Ltd
   </div>
 </div>
 
@@ -127,9 +208,6 @@
   ];
 
   let selectedCustomer = null;
-  let selectedOpportunity = null;
-  const meetingData = {};
-  let autoSelectedOnLoad = false;
 
   // Assign-To chosen email
   let selectedAssignEmail = '';
@@ -138,7 +216,10 @@
   window.addEventListener('DOMContentLoaded', () => {
     const h = new Date().getHours();
     const greeting = h < 12 ? 'Good Morning' : h < 17 ? 'Good Afternoon' : 'Good Evening';
-    document.getElementById('greeting').textContent = `${greeting}, {{ employee_name|escapejs }}`;
+    const text = `${greeting}, {{ employee_name|escapejs }}`;
+    document.getElementById('greeting').textContent = text;
+    const d = document.getElementById('greeting-desktop');
+    if (d) d.textContent = text;
   });
 
   function findCustomerFromQuery(q) {
@@ -170,7 +251,6 @@
         inp.setAttribute('readonly', 'readonly');
         onCustomerChosen();
         updateRemarkVisibility();
-        loadOpportunities();
       } else {
         console.warn('Customer from query not found in provided list:', urlCustomer);
         updateRemarkVisibility();
@@ -228,11 +308,8 @@
       selectedCustomer = c.name;
       inp.value = c.display;
       hideList();
-      selectedOpportunity = null;
-      autoSelectedOnLoad = false;
       onCustomerChosen();
       updateRemarkVisibility();
-      loadOpportunities();
     }
 
     inp.addEventListener('focus', () => showList(customers));
@@ -261,217 +338,16 @@
     document.addEventListener('mousedown', e => { if (!wrap.contains(e.target)) hideList(); });
   })();
 
-  // ===== Opportunities & items =====
-  async function loadOpportunities() {
-    const ul = document.getElementById('opportunitiesList');
-    ul.innerHTML = '<li>Loading…</li>';
-
-    if (!selectedCustomer) {
-      ul.innerHTML = '<li style="color:#ef4444">No customer selected</li>';
-      return;
-    }
-
-    try {
-      const res = await fetch(`{% url 'get_opportunities' %}?customer=${encodeURIComponent(selectedCustomer)}`);
-      const data = await res.json();
-      const opportunities = Array.isArray(data.opportunities) ? data.opportunities : [];
-
-      ul.innerHTML = '';
-      if (!opportunities.length) {
-        ul.innerHTML = '<li style="color:#b0b9bf">No opportunities</li>';
-        document.getElementById('itemsContainer').innerHTML = '';
-        document.getElementById('meetingDetails').style.display = 'none';
-      } else {
-        opportunities.forEach(op => {
-          const li = document.createElement('li');
-          const a = document.createElement('a');
-          a.href = '#';
-          a.textContent = op.name;
-          a.onclick = e => { e.preventDefault(); selectOpportunity(op.name); };
-          if (selectedOpportunity === op.name) a.classList.add('active');
-          li.appendChild(a);
-          ul.appendChild(li);
-        });
-
-        if (!selectedOpportunity && !autoSelectedOnLoad) {
-          autoSelectedOnLoad = true;
-          selectOpportunity(opportunities[0].name);
-        }
-      }
-    } catch (e) {
-      console.error(e);
-      ul.innerHTML = '<li style="color:#ef4444">Error loading</li>';
-    }
-  }
-
-  async function loadItems(op) {
-    const ul = document.getElementById('itemsContainer');
-    ul.innerHTML = '<li>Loading…</li>';
-    try {
-      const res = await fetch(`{% url 'get_opportunity_items' %}?opportunity=${encodeURIComponent(op)}`);
-      const { items } = await res.json();
-      ul.innerHTML = '';
-      if (!items || !items.length) {
-        ul.innerHTML = '<li style="color:#9ca3af">No items</li>';
-      } else {
-        items.forEach(it => {
-          const li = document.createElement('li');
-          li.textContent = it.item_name;
-          ul.appendChild(li);
-        });
-      }
-    } catch {
-      ul.innerHTML = '<li style="color:#ef4444">Error loading items</li>';
-    }
-  }
-
-  function updateBadges() {
-    const bOpp = document.getElementById('badgeOpportunity');
-    const bCus = document.getElementById('badgeCustomer');
-    if (bOpp) bOpp.textContent = selectedOpportunity ? `Opportunity: ${selectedOpportunity}` : 'No opportunity';
-    if (bCus) bCus.textContent = selectedCustomer ? `Customer: ${customers.find(c=>c.name===selectedCustomer)?.display || selectedCustomer}` : 'No customer';
-  }
-  function updateMeetingFooter(saved=false) {
-    const count = document.querySelectorAll('.meeting-entry').length;
-    const mc = document.getElementById('meetingCount');
-    const ls = document.getElementById('lastSaved');
-    if (mc) mc.textContent = `${count} ${count===1?'entry':'entries'}`;
-    if (ls && saved) {
-      const dt = new Date();
-      ls.textContent = `Saved at ${dt.toLocaleTimeString()}`;
-    }
-  }
-
-  function selectOpportunity(op) {
-    if (selectedOpportunity) meetingData[selectedOpportunity] = getEntries();
-    selectedOpportunity = op;
-    document.getElementById('meetingDetails').style.display = 'block';
-    updateBadges();
-    renderEntries(meetingData[op] || []);
-    loadItems(op);
-    document.querySelectorAll('#opportunitiesList a').forEach(a => a.classList.toggle('active', a.textContent === op));
-  }
-
-  function renderEntries(entries) {
-    const container = document.getElementById('meetingEntries');
-    container.innerHTML = '';
-    entries.forEach(entry => addEntry(entry));
-  }
-
-  function getEntries() {
-    return [...document.querySelectorAll('.meeting-entry')].map(div => ({
-      opportunity: div.querySelector('[name="opportunity"]').value,
-      agenda: div.querySelector('[name="agenda"]').value,
-      visited_department: div.querySelector('[name="visited_department"]').value,
-      contact_person: div.querySelector('[name="contact_person"]').value,
-      notes: div.querySelector('[name="notes"]').value
-    }));
-  }
-
-  function addEntry(data = {}) {
-    const container = document.getElementById('meetingEntries');
-    const div = document.createElement('div');
-    div.className = 'meeting-entry meeting-section';
-    div.innerHTML = `
-      <div class="meeting-grid">
-        <div class="form-group">
-          <label>Opportunity</label>
-          <input name="opportunity" class="input-opportunity" placeholder="Opportunity" value="\${data.opportunity || selectedOpportunity || ''}" />
-        </div>
-
-        <div class="form-group">
-          <label>Visited Department <span class="muted">(required)</span></label>
-          <select name="visited_department" required class="input-contact">
-            <option value="" \${!data.visited_department ? 'selected' : ''}>Select Visited Department</option>
-            <option value="Management/Purchaser" \${data.visited_department === 'Management/Purchaser' ? 'selected' : ''}>Management/Purchaser</option>
-            <option value="Instrumentation" \${data.visited_department === 'Instrumentation' ? 'selected' : ''}>Instrumentation</option>
-            <option value="User" \${data.visited_department === 'User' ? 'selected' : ''}>User</option>
-          </select>
-        </div>
-
-        <div class="form-group" style="grid-column: 1 / -1;">
-          <label>Contact Person</label>
-          <input name="contact_person" class="input-contact" placeholder="Contact Person" value="\${data.contact_person || ''}" />
-        </div>
-
-        <div class="form-group" style="grid-column: 1 / -1;">
-          <label>Notes</label>
-          <textarea name="notes" class="input-agenda" placeholder="Notes">\${data.notes || ''}</textarea>
-        </div>
-      </div>
-
-      <div class="meeting-actions">
-        <button type="button" class="btn btn-outline remove-entry" aria-label="Remove meeting entry">Remove</button>
-      </div>
-
-      <input type="hidden" name="agenda" value="Field Visit" />
-    `;
-    div.querySelector('.remove-entry').onclick = () => {
-      div.remove();
-      updateMeetingFooter();
-    };
-    container.appendChild(div);
-    updateMeetingFooter();
-  }
-
-  document.getElementById('addEntry').onclick = () => addEntry();
-  document.getElementById('saveEntries').onclick = () => {
-    if (!selectedOpportunity) {
-      updateStatus('Please select an opportunity first.', true);
-      return;
-    }
-    meetingData[selectedOpportunity] = getEntries();
-    updateStatus(`Saved ${meetingData[selectedOpportunity].length} meeting entries.`);
-    updateMeetingFooter(true);
-  };
-
-  // ===== Geo (unchanged) =====
+  // ===== Geo =====
   async function getGeoSafe() {
     return new Promise(resolve => {
       if (!navigator.geolocation) return resolve({});
-      navigator.geolocation.getCurrentPosition(async pos => {
-        const latitude = pos.coords.latitude;
-        const longitude = pos.coords.longitude;
-        let addr = {};
-        try {
-          const r = await fetch(
-            `https://nominatim.openstreetmap.org/reverse?format=json&lat=${latitude}&lon=${longitude}`
-          );
-          addr = (await r.json()).address || {};
-        } catch {}
-        resolve({
-          latitude,
-          longitude,
-          city: addr.city || addr.town || '',
-          state: addr.state || '',
-          area: addr.suburb || addr.village || ''
-        });
-      }, _err => resolve({}));
+      navigator.geolocation.getCurrentPosition(
+        pos => resolve({ latitude: pos.coords.latitude, longitude: pos.coords.longitude, city: '', state: '', area: '' }),
+        _err => resolve({}),
+        { maximumAge: 15000, timeout: 10000 }
+      );
     });
-  }
-
-  // collect all meeting entries per opportunity
-  function collectAllMeetingEntries() {
-    if (selectedOpportunity) {
-      meetingData[selectedOpportunity] = getEntries();
-    }
-    const byOpp = {};
-    Object.entries(meetingData || {}).forEach(([opp, entries]) => {
-      const cleaned = (entries || [])
-        .map(e => {
-          const o = (e.opportunity || opp || '').trim();
-          return {
-            opportunity: o,
-            agenda: (e.agenda || 'Field Visit').trim(),
-            visited_department: (e.visited_department || '').trim(),
-            contact_person: (e.contact_person || '').trim(),
-            notes: (e.notes || '').trim()
-          };
-        })
-        .filter(e => e.opportunity && e.visited_department);
-      if (cleaned.length) byOpp[opp] = cleaned;
-    });
-    return byOpp;
   }
 
   // ===== Assign-To helpers =====
@@ -506,21 +382,6 @@
       area:  geo.area  || ''
     };
 
-    const byOpp = collectAllMeetingEntries();
-
-    const totalMeetings = Object.values(byOpp).reduce((n, arr) => n + arr.length, 0);
-    if (totalMeetings > 0 && !selectedCustomer) {
-      updateStatus('Please select a customer before punching out.', true);
-      return;
-    }
-
-    const singleMeetings = selectedOpportunity ? (meetingData[selectedOpportunity] || []) : [];
-
-    const hadIncomplete =
-      (selectedOpportunity && singleMeetings.some(e => !e.visited_department)) ||
-      Object.values(meetingData).some(list => (list || []).some(e => !e.visited_department));
-    if (hadIncomplete) console.warn('Some entries skipped because "Visited Department" was empty.');
-
     const remarkFree = !selectedCustomer
       ? (document.getElementById('freeRemark')?.value || '').trim()
       : '';
@@ -530,9 +391,6 @@
     const payload = {
       ...base,
       customer: selectedCustomer || '',
-      opportunity: selectedOpportunity || '',
-      meeting_details: singleMeetings,
-      meeting_details_by_opportunity: byOpp,
       remark_free: remarkFree,
       assign_to_email,
     };
@@ -565,7 +423,6 @@
   const btnUpdateLoc = document.getElementById('btn-update-location');
 
   function onCustomerChosen() {
-    updateBadges();
     btnUpdateLoc.disabled = !selectedCustomer;
     updateRemarkVisibility();
   }
@@ -784,6 +641,134 @@
     });
     document.addEventListener('mousedown', e => { if (!wrap.contains(e.target)) hideList(); });
   }
+</script>
+<!-- WhatsApp Bot FAB -->
+<div id="wa-fab-wrap">
+  <!-- Speech bubble -->
+  <div id="wa-bubble">
+    <span id="wa-bubble-text">Talk to Bot</span>
+    <button id="wa-bubble-close" aria-label="Dismiss">×</button>
+    <div id="wa-bubble-tail"></div>
+  </div>
+
+  <a href="https://wa.me/918097173480" target="_blank" rel="noopener" id="wa-fab" aria-label="Chat with bot on WhatsApp">
+    <svg xmlns="http://www.w3.org/2000/svg" width="28" height="28" viewBox="0 0 24 24" fill="#fff">
+      <path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347m-5.421 7.403h-.004a9.87 9.87 0 01-5.031-1.378l-.361-.214-3.741.982.998-3.648-.235-.374a9.86 9.86 0 01-1.51-5.26c.001-5.45 4.436-9.884 9.888-9.884 2.64 0 5.122 1.03 6.988 2.898a9.825 9.825 0 012.893 6.994c-.003 5.45-4.437 9.884-9.885 9.884m8.413-18.297A11.815 11.815 0 0012.05 0C5.495 0 .16 5.335.157 11.892c0 2.096.547 4.142 1.588 5.945L.057 24l6.305-1.654a11.882 11.882 0 005.683 1.448h.005c6.554 0 11.89-5.335 11.893-11.893a11.821 11.821 0 00-3.48-8.413z"/>
+    </svg>
+  </a>
+</div>
+
+<style>
+  #wa-fab-wrap {
+    position: fixed;
+    bottom: 24px;
+    right: 24px;
+    display: flex;
+    flex-direction: column;
+    align-items: flex-end;
+    gap: 10px;
+    z-index: 9999;
+  }
+
+  /* Speech bubble */
+  #wa-bubble {
+    position: relative;
+    background: #fff;
+    border-radius: 14px 14px 4px 14px;
+    padding: 10px 32px 10px 14px;
+    box-shadow: 0 4px 18px rgba(0,0,0,.14);
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    animation: wa-bubble-in .35s cubic-bezier(.34,1.56,.64,1) both;
+    border: 1px solid rgba(37,211,102,.25);
+  }
+  #wa-bubble-text {
+    font-family: 'Inter', sans-serif;
+    font-size: 13px;
+    font-weight: 600;
+    color: #111;
+    white-space: nowrap;
+  }
+  /* Robot emoji graphic */
+  #wa-bubble-text::before {
+    content: '🤖 ';
+  }
+  #wa-bubble-close {
+    position: absolute;
+    top: 4px;
+    right: 7px;
+    background: none;
+    border: none;
+    font-size: 15px;
+    line-height: 1;
+    color: #94a3b8;
+    cursor: pointer;
+    padding: 0;
+    width: auto;
+    height: auto;
+    box-shadow: none;
+    min-width: 0;
+    transform: none;
+  }
+  #wa-bubble-close:hover { color: #475569; transform: none; box-shadow: none; }
+  /* Tail pointing down-right toward FAB */
+  #wa-bubble-tail {
+    position: absolute;
+    bottom: -8px;
+    right: 18px;
+    width: 0; height: 0;
+    border-left: 8px solid transparent;
+    border-right: 0px solid transparent;
+    border-top: 9px solid #fff;
+    filter: drop-shadow(0 2px 1px rgba(0,0,0,.06));
+  }
+
+  #wa-bubble.hidden { display: none; }
+
+  @keyframes wa-bubble-in {
+    from { opacity: 0; transform: scale(.8) translateY(8px); }
+    to   { opacity: 1; transform: scale(1) translateY(0); }
+  }
+
+  /* FAB button */
+  #wa-fab {
+    width: 56px;
+    height: 56px;
+    border-radius: 50%;
+    background: #25d366;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    box-shadow: 0 4px 16px rgba(37,211,102,.45), 0 2px 6px rgba(0,0,0,.18);
+    transition: transform .15s ease, box-shadow .2s ease;
+    text-decoration: none;
+    position: relative;
+  }
+  #wa-fab:hover {
+    transform: scale(1.1);
+    box-shadow: 0 6px 24px rgba(37,211,102,.55), 0 3px 8px rgba(0,0,0,.2);
+  }
+  #wa-fab:active { transform: scale(.96); }
+  #wa-fab::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    border-radius: 50%;
+    animation: wa-pulse 2.5s ease-out infinite;
+  }
+  @keyframes wa-pulse {
+    0%   { box-shadow: 0 0 0 0 rgba(37,211,102,.45); }
+    70%  { box-shadow: 0 0 0 12px rgba(37,211,102,0); }
+    100% { box-shadow: 0 0 0 0 rgba(37,211,102,0); }
+  }
+</style>
+<script>
+  document.getElementById('wa-bubble-close').addEventListener('click', function(e) {
+    e.preventDefault();
+    e.stopPropagation();
+    document.getElementById('wa-bubble').classList.add('hidden');
+  });
 </script>
 </body>
 </html>

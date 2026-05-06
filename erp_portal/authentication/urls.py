@@ -12,6 +12,7 @@ urlpatterns = [
     path("api/get_opportunities/", views.get_opportunities, name="get_opportunities"),
     path("api/get_opportunity_items/", views.get_opportunity_items, name="get_opportunity_items"),
     path("api/nearby_customers/", views.nearby_customers, name="nearby_customers"),
+    path("api/search_customers/", views.search_customers, name="search_customers"),
     path("api/update_customer_location/", views.update_customer_location, name="update_customer_location"),
     path("api/admin/push_customer_location/", views.admin_push_customer_location, name="admin_push_customer_location"),
     path("energy/", energy_points, name="energy_points"),

@@ -38,7 +38,7 @@ def get_employees(request):
             "fields": '["name","employee_name","user_id"]',
             "limit_page_length": 1000
         }
-        r1 = sess.get(f"{settings.FRAPPE_BASE_URL}/api/resource/Employee", params=params_emp, timeout=10)
+        r1 = sess.get(f"{FRAPPE_BASE_URL}/api/resource/Employee", params=params_emp, timeout=10)
         for row in (r1.json().get("data") or []):
             email = (row or {}).get("user_id")
             empname = (row or {}).get("employee_name")
@@ -54,7 +54,7 @@ def get_employees(request):
             "filters": '[["enabled","=","1"]]',
             "limit_page_length": 1000
         }
-        r2 = sess.get(f"{settings.FRAPPE_BASE_URL}/api/resource/User", params=params_user, timeout=10)
+        r2 = sess.get(f"{FRAPPE_BASE_URL}/api/resource/User", params=params_user, timeout=10)
         for u in (r2.json().get("data") or []):
             email = (u or {}).get("name")
             if email and "@" in email:
@@ -326,9 +326,9 @@ def update_customer_location(request):
 FRAPPE_LOGIN_URL = getattr(
     settings,
     "FRAPPE_LOGIN_URL",
-    "https://erpv14.electrolabgroup.com/api/method/login",
+    "https://eipl.electrolabgroup.com/api/method/login",
 )
-FRAPPE_BASE_URL = "https://erpv14.electrolabgroup.com"
+FRAPPE_BASE_URL = "https://eipl.electrolabgroup.com"
 
 
 
@@ -340,6 +340,49 @@ def haversine_km(lat1, lon1, lat2, lon2):
     dlmb = math.radians(lon2 - lon1)
     a = math.sin(dphi / 2) ** 2 + math.cos(p1) * math.cos(p2) * math.sin(dlmb / 2) ** 2
     return 2 * R * math.atan2(math.sqrt(a), math.sqrt(1 - a))
+
+
+@require_GET
+def search_customers(request):
+    """Search customers by name across the full customer list (not proximity-filtered)."""
+    raw_user = request.session.get("frappe_user")
+    if not raw_user:
+        return JsonResponse({"error": "Not logged in"}, status=401)
+
+    q = (request.GET.get("q") or "").strip()
+    if not q:
+        return JsonResponse({"customers": []})
+
+    sess = requests.Session()
+    sess.cookies.update(request.session.get("frappe_cookies", {}))
+    if token := getattr(settings, "FRAPPE_API_TOKEN", None):
+        sess.headers.update({"Authorization": f"token {token}"})
+
+    params = {
+        "fields": '["name","customer_name","custom_latitude","custom_longitude"]',
+        "filters": json.dumps([["customer_name", "like", f"%{q}%"]]),
+        "limit_page_length": 50,
+    }
+    r = sess.get(f"{FRAPPE_BASE_URL}/api/resource/Customer", params=params, timeout=8)
+    data = (r.json().get("data") if r.ok else []) or []
+
+    results = []
+    for c in data:
+        lat, lon = None, None
+        try:
+            lat = float(c.get("custom_latitude"))
+            lon = float(c.get("custom_longitude"))
+        except (TypeError, ValueError):
+            pass
+        results.append({
+            "name": c["name"],
+            "customer_name": c.get("customer_name") or c["name"],
+            "latitude": lat,
+            "longitude": lon,
+            "has_location": lat is not None and lon is not None,
+        })
+
+    return JsonResponse({"customers": results})
 
 
 @require_GET
@@ -709,17 +752,45 @@ def punch(request):
     if request.method == "GET":
         emp, err = get_employee()
         if not err and emp:
-            last_url = f"{FRAPPE_BASE_URL}/api/resource/Employee Checkin"
-            last_params = {
-                "fields": '["log_type","time"]',
-                "filters": json.dumps([["employee", "=", emp["name"]]]),
-                "order_by": "time desc",
-                "limit_page_length": 1,
-            }
-            last_resp = sess.get(last_url, params=last_params, timeout=10)
-            last = last_resp.json().get("data", [])
-            if last and last[0].get("log_type") == "IN":
-                return redirect("select_customer")
+            try:
+                last_resp = sess.get(
+                    f"{FRAPPE_BASE_URL}/api/resource/Employee Checkin",
+                    params={
+                        "fields": '["name","log_type","time"]',
+                        "filters": json.dumps([["employee", "=", emp["name"]]]),
+                        "order_by": "time desc",
+                        "limit_page_length": 1,
+                    },
+                    timeout=10,
+                )
+                last = (last_resp.json().get("data") or [])
+                if last and last[0].get("log_type") == "IN":
+                    # Fetch customer from the checkin doc (try customer field, fall back to remark)
+                    last_customer = ""
+                    try:
+                        doc_resp = sess.get(
+                            f"{FRAPPE_BASE_URL}/api/resource/Employee Checkin/{quote(last[0]['name'])}",
+                            params={"fields": '["customer","remark"]'},
+                            timeout=8,
+                        )
+                        doc = (doc_resp.json().get("data") or {})
+                        last_customer = (doc.get("customer") or "").strip()
+                        # Fall back to parsing "Customer: XYZ" from remark
+                        if not last_customer:
+                            remark = (doc.get("remark") or "")
+                            for part in remark.split("|"):
+                                part = part.strip()
+                                if part.lower().startswith("customer:"):
+                                    last_customer = part[len("customer:"):].strip()
+                                    break
+                    except Exception:
+                        pass
+                    dest = reverse("select_customer")
+                    if last_customer:
+                        dest = f"{dest}?customer={quote(last_customer)}"
+                    return redirect(dest)
+            except Exception:
+                pass
 
         context = {
             "employee_name": (emp or {}).get("employee_name", raw_user)
