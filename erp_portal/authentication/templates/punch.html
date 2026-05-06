@@ -14,10 +14,13 @@
     <h1 id="greeting">Good Day {{ employee_name }}</h1>
     <p class="sub" id="listSubtitle">Customers within 5 km of your current location</p>
     <iframe id="map" src="https://maps.google.com/maps?q=20.5937,78.9629&z=5&output=embed" loading="lazy" allowfullscreen></iframe>
-    <div class = "toolbar">
-
-      <div class="search">
-        <input id="searchBox" type="text" placeholder="Search customer in list…">
+    <div class="toolbar">
+      <div class="search" style="position:relative;flex:1;">
+        <div class="dropdown-wrap" id="searchDropdownWrap">
+          <input id="searchBox" type="text" placeholder="Search customer in list…" autocomplete="off" aria-autocomplete="list" aria-haspopup="listbox" aria-expanded="false" aria-controls="searchDropdownList">
+          <div class="dropdown-arrow" aria-hidden="true"></div>
+          <div class="dropdown-list" id="searchDropdownList" role="listbox" tabindex="-1"></div>
+        </div>
       </div>
     </div>
     <div class="toolbar">
@@ -87,6 +90,15 @@
     // nearbyCustomers holds the full nearby list for when search is cleared
     let nearbyCustomers = [];
 
+    // Full-name toast
+    function showFullName(name) {
+      const t = document.getElementById('name-toast');
+      t.textContent = name;
+      t.classList.add('show');
+      clearTimeout(t._timer);
+      t._timer = setTimeout(() => t.classList.remove('show'), 3000);
+    }
+
     function renderList(customers, emptyMsg = 'No customers found within 5 km.') {
       listEl.innerHTML = '';
       if (!customers.length) {
@@ -99,13 +111,19 @@
 
         const info = document.createElement('div');
         info.className = 'info';
-        const distLine = c.distance_km != null
-          ? `<span class="muted">${c.distance_km} km away</span>`
-          : '';
-        info.innerHTML = `
-          <span class="title">${escapeHtml(c.customer_name || '')}</span>
-          ${distLine}
-        `;
+
+        const nameSpan = document.createElement('span');
+        nameSpan.className = 'title name-tap';
+        nameSpan.textContent = c.customer_name || '';
+        nameSpan.title = c.customer_name || '';
+        nameSpan.addEventListener('click', () => showFullName(c.customer_name || ''));
+
+        const distLine = document.createElement('span');
+        distLine.className = 'muted';
+        distLine.textContent = c.distance_km != null ? `${c.distance_km} km away` : '';
+
+        info.appendChild(nameSpan);
+        if (c.distance_km != null) info.appendChild(distLine);
 
         const actions = document.createElement('div');
         actions.className = 'actions';
@@ -134,31 +152,105 @@
       });
     }
 
-    // Debounced search against the full customer list
-    let searchTimer = null;
-    async function handleSearch(q) {
-      clearTimeout(searchTimer);
+    // ── Search dropdown autocomplete ──
+    (function() {
+      const wrap = document.getElementById('searchDropdownWrap');
+      const inp  = document.getElementById('searchBox');
+      const dd   = document.getElementById('searchDropdownList');
       const subtitle = document.getElementById('listSubtitle');
-      if (!q.trim()) {
-        subtitle.textContent = 'Customers within 5 km of your current location';
-        renderList(nearbyCustomers);
-        return;
-      }
-      searchTimer = setTimeout(async () => {
-        setStatus('Searching…', 'loading');
-        try {
-          const url = `{% url 'search_customers' %}?q=${encodeURIComponent(q.trim())}`;
-          const r = await fetch(url);
-          if (!r.ok) throw new Error(await r.text());
-          const data = await r.json();
-          subtitle.textContent = `Search results for "${q.trim()}"`;
-          renderList(data.customers || [], 'No customers found.');
-          setStatus('');
-        } catch {
-          setStatus('Search failed', 'error');
+      let searchTimer = null;
+      let highlighted = -1;
+      let lastResults = [];
+
+      function showDD(results) {
+        dd.innerHTML = '';
+        highlighted = -1;
+        if (!results.length) {
+          const no = document.createElement('div');
+          no.className = 'no-results';
+          no.textContent = 'No customers found';
+          dd.appendChild(no);
+        } else {
+          results.forEach((c, i) => {
+            const div = document.createElement('div');
+            div.className = 'dropdown-item';
+            div.setAttribute('role', 'option');
+            div.setAttribute('aria-selected', 'false');
+            div.innerHTML = `
+              <div style="font-weight:600;font-size:14px">${escapeHtml(c.customer_name || '')}</div>
+              ${c.territory ? `<div class="muted" style="font-size:12px">${escapeHtml(c.territory)}</div>` : ''}`;
+            div.addEventListener('click', () => pickSuggestion(c));
+            dd.appendChild(div);
+          });
         }
-      }, 350);
-    }
+        dd.classList.add('show');
+        wrap.classList.add('dropdown-open');
+        inp.setAttribute('aria-expanded', 'true');
+      }
+
+      function hideDD() {
+        dd.classList.remove('show');
+        wrap.classList.remove('dropdown-open');
+        highlighted = -1;
+        inp.setAttribute('aria-expanded', 'false');
+      }
+
+      function pickSuggestion(c) {
+        inp.value = c.customer_name || '';
+        hideDD();
+        subtitle.textContent = `Results for "${c.customer_name}"`;
+        renderList([c], 'No customers found.');
+        setStatus('');
+      }
+
+      inp.addEventListener('input', e => {
+        const q = e.target.value.trim();
+        clearTimeout(searchTimer);
+        if (!q) {
+          hideDD();
+          subtitle.textContent = 'Customers within 5 km of your current location';
+          renderList(nearbyCustomers);
+          return;
+        }
+        searchTimer = setTimeout(async () => {
+          try {
+            setStatus('Searching…', 'loading');
+            const r = await fetch(`{% url 'search_customers' %}?q=${encodeURIComponent(q)}`);
+            if (!r.ok) throw new Error();
+            const data = await r.json();
+            lastResults = data.customers || [];
+            showDD(lastResults);
+            subtitle.textContent = `Search results for "${q}"`;
+            renderList(lastResults, 'No customers found.');
+            setStatus('');
+          } catch {
+            setStatus('Search failed', 'error');
+          }
+        }, 300);
+      });
+
+      inp.addEventListener('keydown', e => {
+        const items = [...dd.querySelectorAll('.dropdown-item')];
+        if (e.key === 'ArrowDown') {
+          e.preventDefault();
+          highlighted = Math.min(highlighted + 1, items.length - 1);
+          items.forEach((el, i) => el.classList.toggle('highlighted', i === highlighted));
+          items[highlighted]?.scrollIntoView({ block: 'nearest' });
+        } else if (e.key === 'ArrowUp') {
+          e.preventDefault();
+          highlighted = Math.max(highlighted - 1, 0);
+          items.forEach((el, i) => el.classList.toggle('highlighted', i === highlighted));
+          items[highlighted]?.scrollIntoView({ block: 'nearest' });
+        } else if (e.key === 'Enter' && highlighted >= 0) {
+          if (lastResults[highlighted]) pickSuggestion(lastResults[highlighted]);
+        } else if (e.key === 'Escape') {
+          hideDD();
+        }
+      });
+
+      inp.addEventListener('blur', () => setTimeout(hideDD, 150));
+      document.addEventListener('mousedown', e => { if (!wrap.contains(e.target)) hideDD(); });
+    })();
 
     async function doPunchIn(customerName /* optional */, triggerBtn /* optional */) {
       setStatus('Punching IN…', 'loading');
@@ -251,8 +343,38 @@
 
     // UI events
     document.getElementById('btn-in-generic').addEventListener('click', () => doPunchIn(null, btnNoCust));
-    searchBox.addEventListener('input', e => handleSearch(e.target.value));
   </script>
+
+<!-- Full-name toast -->
+<div id="name-toast"></div>
+<style>
+  .name-tap { cursor: pointer; text-decoration: underline dotted #94a3b8; }
+  .name-tap:active { opacity: .7; }
+  #name-toast {
+    position: fixed;
+    bottom: 90px;
+    left: 50%;
+    transform: translateX(-50%) translateY(12px);
+    background: rgba(15,23,42,.88);
+    color: #fff;
+    padding: 10px 20px;
+    border-radius: 24px;
+    font-size: 14px;
+    font-weight: 500;
+    opacity: 0;
+    transition: opacity .22s, transform .22s;
+    pointer-events: none;
+    max-width: 82vw;
+    text-align: center;
+    z-index: 8000;
+    white-space: normal;
+    word-break: break-word;
+  }
+  #name-toast.show {
+    opacity: 1;
+    transform: translateX(-50%) translateY(0);
+  }
+</style>
 
 <!-- Greeting splash (shown once after login) -->
 <div id="greeting-splash" style="display:none">

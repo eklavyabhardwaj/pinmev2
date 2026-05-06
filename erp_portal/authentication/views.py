@@ -359,7 +359,7 @@ def search_customers(request):
         sess.headers.update({"Authorization": f"token {token}"})
 
     params = {
-        "fields": '["name","customer_name","custom_latitude","custom_longitude"]',
+        "fields": '["name","customer_name","territory","custom_latitude","custom_longitude"]',
         "filters": json.dumps([["customer_name", "like", f"%{q}%"]]),
         "limit_page_length": 50,
     }
@@ -377,6 +377,7 @@ def search_customers(request):
         results.append({
             "name": c["name"],
             "customer_name": c.get("customer_name") or c["name"],
+            "territory": c.get("territory") or "",
             "latitude": lat,
             "longitude": lon,
             "has_location": lat is not None and lon is not None,
