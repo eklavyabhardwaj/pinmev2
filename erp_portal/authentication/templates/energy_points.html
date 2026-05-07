@@ -8,22 +8,46 @@
   <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><defs><linearGradient id=%22g%22 x1=%220%22 y1=%220%22 x2=%221%22 y2=%221%22><stop offset=%220%25%22 stop-color=%22%230f766e%22/><stop offset=%22100%25%22 stop-color=%22%23374151%22/></linearGradient></defs><rect width=%22100%22 height=%22100%22 rx=%2222%22 fill=%22url(%23g)%22/><path d=%22M50,18 C38,18 28,28 28,40 C28,56 50,82 50,82 C50,82 72,56 72,40 C72,28 62,18 50,18 Z%22 fill=%22white%22/><circle cx=%2250%22 cy=%2239%22 r=%2210%22 fill=%22%230f766e%22/></svg>">
   <link rel="stylesheet" href="{% static 'pinme.css' %}">
   <style>
-    /* Minimal tweaks on top of pinme.css */
-    .wrap { max-width: 1100px; margin: 0 auto; padding: 12px; }
+    /* ── Page layout ── */
+    /* Override pinme.css body flex-centering: this page is long and needs normal block flow */
+    body { display: block; padding: 12px 16px; }
+
+    .wrap { max-width: 900px; margin: 0 auto; padding: 0; }
+
     .grid { display: grid; gap: 12px; }
-    @media (min-width: 900px) {
+    @media (min-width: 600px) {
       .grid-3 { grid-template-columns: repeat(3, 1fr); }
       .grid-2 { grid-template-columns: repeat(2, 1fr); }
     }
+
     .section-title { margin: 20px 0 8px; }
     .muted-small { color: var(--muted, #6b7280); font-size: 12px; }
+
+    /* KPI value badges: pointer-events off, never stretch full width */
     .kpi .btn { pointer-events: none; }
+    .kpi .buttons { flex-direction: row !important; align-items: center !important; flex-wrap: nowrap !important; }
+    .kpi .buttons .btn { width: auto !important; flex-shrink: 0; }
+
+    /* History lists: no inner scroll — let the whole page scroll */
+    .list { max-height: none; overflow-y: visible; }
 
     /* History bar */
-    .bar { height: 8px; width: 180px; background: rgba(0,0,0,.06); border-radius: 6px; overflow: hidden; }
-    .bar > i { display:block; height:100%; width:0; background: linear-gradient(90deg, #2563eb, #60a5fa); transition: width .6s ease; }
+    .bar {
+      height: 8px;
+      width: clamp(50px, 20vw, 180px);
+      background: rgba(0,0,0,.06);
+      border-radius: 6px;
+      overflow: hidden;
+      flex-shrink: 1;
+    }
+    .bar > i { display: block; height: 100%; width: 0; background: linear-gradient(90deg, #2563eb, #60a5fa); transition: width .6s ease; }
 
-    /* Footer "How you earn" — plain list (no boxes) */
+    /* History/leaderboard card rows: keep badge compact, never stretch */
+    .card .buttons .btn { width: auto !important; flex-shrink: 0; }
+    /* Allow card info titles to wrap on narrow screens */
+    .card .info .title { white-space: normal; word-break: break-word; }
+
+    /* Footer "How you earn" */
     .footer-earn { margin-top: 20px; }
     .footer-earn .earn-list { list-style: none; padding: 0; margin: 6px 0 0; }
     .footer-earn .earn-list li {
@@ -33,42 +57,70 @@
     .footer-earn .earn-list li:last-child { border-bottom: 0; }
     .footer-earn .label { position: relative; padding-left: 18px; }
     .footer-earn .label::before { content: "•"; position: absolute; left: 0; top: 0; line-height: 1; color: #6b7280; }
-    .footer-earn .earn-pts { font-weight: 700; }
+    .footer-earn .earn-pts { font-weight: 700; white-space: nowrap; }
 
-    /* Prevent long usernames from overflowing on small screens */
-.truncate {
-  display: inline-block;
-  max-width: 60vw;          /* fits typical phones */
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  vertical-align: bottom;
-}
+    /* Header user badge — full-width, centred, two-line */
+    .header-card { flex-direction: column; align-items: stretch; gap: 10px; }
+    .user-badge {
+      width: 100% !important;
+      flex-direction: column !important;
+      align-items: center !important;
+      justify-content: center !important;
+      gap: 2px !important;
+      white-space: normal;
+      text-align: center;
+      padding: 10px 14px;
+      min-width: 0;
+      overflow: hidden;
+    }
+    .user-badge-name {
+      display: block;
+      font-size: 14px;
+      font-weight: 700;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      max-width: 100%;
+    }
+    .user-badge-email {
+      display: block;
+      font-size: 12px;
+      font-weight: 400;
+      opacity: 0.7;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      max-width: 100%;
+    }
 
-/* Make the layout flexible on tiny widths */
-@media (max-width: 480px) {
-  .card .info, .card .buttons { min-width: 0; }  /* allow shrinking */
-  .card .buttons .btn { font-size: 12px; padding: 6px 10px; }
-}
+    /* ── Narrow-screen overrides ── */
+    @media (max-width: 480px) {
+      body { padding: 8px 10px; }
 
+      /* History bar: expand to fill available space in its flex row */
+      .bar { width: auto; flex: 1; min-width: 40px; }
+
+      /* Leaderboard/activity card buttons row: stay horizontal, badge compact */
+      .card .buttons { flex-direction: row !important; flex-wrap: nowrap !important; }
+      .card .buttons .btn { font-size: 13px; padding: 7px 10px; }
+    }
   </style>
 </head>
 <body>
   <div class="wrap">
 
     <!-- Header -->
-    <div class="card" style="margin-bottom:12px;">
+    <div class="card header-card" style="margin-bottom:12px;">
       <div class="info">
         <span class="title">Energy Points</span>
         <span class="muted">Clear stats. Team comparison.</span>
       </div>
-      <div class="buttons">
-        {% if request.user.is_authenticated %}
-          <span class="btn btn-outline">
-            {{ employee_name|default:request.user.get_username }}{% if employee_name %} ({{ request.user.get_username }}){% endif %}
-          </span>
-        {% endif %}
-      </div>
+      {% if request.user.is_authenticated %}
+        <span class="btn btn-outline user-badge">
+          <span class="user-badge-name">{{ employee_name|default:request.user.get_username }}</span>
+          {% if employee_name %}<span class="user-badge-email">{{ request.user.get_username }}</span>{% endif %}
+        </span>
+      {% endif %}
     </div>
 
     <!-- Quick Punch In (redirect only) -->
