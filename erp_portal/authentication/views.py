@@ -952,6 +952,25 @@ def punch(request):
     if data.get("log_type") == "OUT":
         # Lead punch-out: simplified flow (no opportunity/meeting ERP push)
         if lead:
+            notes_text = (data.get("notes") or "").strip()
+
+            # Push note to Lead timeline as a comment in ERP
+            if notes_text:
+                try:
+                    sess.post(
+                        f"{FRAPPE_BASE_URL}/api/method/frappe.desk.form.utils.add_comment",
+                        data={
+                            "reference_doctype": "Lead",
+                            "reference_name": lead,
+                            "content": f"<b>PinMe Visit Note:</b> {notes_text}",
+                            "comment_email": raw_user,
+                            "comment_by": raw_user,
+                        },
+                        timeout=10,
+                    )
+                except Exception:
+                    pass  # note push failure should not block punch-out
+
             try:
                 sess2 = requests.Session()
                 sess2.cookies.update(request.session.get("frappe_cookies", {}))
