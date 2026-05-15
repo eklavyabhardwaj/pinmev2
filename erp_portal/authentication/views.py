@@ -343,6 +343,65 @@ def haversine_km(lat1, lon1, lat2, lon2):
 
 
 @require_GET
+def get_my_leads(request):
+    """Return leads assigned to the logged-in user."""
+    raw_user = request.session.get("frappe_user")
+    if not raw_user:
+        return JsonResponse({"error": "Not logged in"}, status=401)
+
+    sess = requests.Session()
+    sess.cookies.update(request.session.get("frappe_cookies", {}))
+    if token := getattr(settings, "FRAPPE_API_TOKEN", None):
+        sess.headers.update({"Authorization": f"token {token}"})
+
+    params = {
+        "fields": '["name","lead_name","status","company_name","mobile_no","territory"]',
+        "filters": json.dumps([
+            ["lead_owner", "=", raw_user],
+            ["status", "not in", ["Converted", "Do Not Contact"]],
+        ]),
+        "limit_page_length": 100,
+        "order_by": "modified desc",
+    }
+    r = sess.get(f"{FRAPPE_BASE_URL}/api/resource/Lead", params=params, timeout=10)
+    data = (r.json().get("data") if r.ok else []) or []
+    return JsonResponse({"leads": data})
+
+
+@require_GET
+def search_leads(request):
+    """Search leads by name."""
+    raw_user = request.session.get("frappe_user")
+    if not raw_user:
+        return JsonResponse({"error": "Not logged in"}, status=401)
+
+    q = (request.GET.get("q") or "").strip()
+    if not q:
+        return JsonResponse({"leads": []})
+
+    sess = requests.Session()
+    sess.cookies.update(request.session.get("frappe_cookies", {}))
+    if token := getattr(settings, "FRAPPE_API_TOKEN", None):
+        sess.headers.update({"Authorization": f"token {token}"})
+
+    fields = '["name","lead_name","status","company_name","mobile_no","territory","lead_owner"]'
+
+    # Search by lead_name OR company_name — run both queries and merge by name
+    seen = {}
+    for field in ("lead_name", "company_name"):
+        params = {
+            "fields": fields,
+            "filters": json.dumps([[field, "like", f"%{q}%"]]),
+            "limit_page_length": 50,
+        }
+        r = sess.get(f"{FRAPPE_BASE_URL}/api/resource/Lead", params=params, timeout=8)
+        for row in (r.json().get("data") if r.ok else []) or []:
+            seen.setdefault(row["name"], row)
+
+    return JsonResponse({"leads": list(seen.values())})
+
+
+@require_GET
 def search_customers(request):
     """Search customers by name across the full customer list (not proximity-filtered)."""
     raw_user = request.session.get("frappe_user")
@@ -751,6 +810,16 @@ def punch(request):
         return data[0], None
 
     if request.method == "GET":
+        # Lead mode: skip the open-checkin redirect, render with lead context
+        if request.GET.get("mode") == "lead":
+            emp, err = get_employee()
+            context = {
+                "employee_name": (emp or {}).get("employee_name", raw_user) if not err else raw_user,
+                "lead_mode": True,
+                "active_lead": request.GET.get("lead", ""),
+            }
+            return render(request, "punch.html", context)
+
         emp, err = get_employee()
         if not err and emp:
             try:
@@ -766,8 +835,8 @@ def punch(request):
                 )
                 last = (last_resp.json().get("data") or [])
                 if last and last[0].get("log_type") == "IN":
-                    # Fetch customer from the checkin doc (try customer field, fall back to remark)
                     last_customer = ""
+                    last_lead = ""
                     try:
                         doc_resp = sess.get(
                             f"{FRAPPE_BASE_URL}/api/resource/Employee Checkin/{quote(last[0]['name'])}",
@@ -776,16 +845,19 @@ def punch(request):
                         )
                         doc = (doc_resp.json().get("data") or {})
                         last_customer = (doc.get("customer") or "").strip()
-                        # Fall back to parsing "Customer: XYZ" from remark
-                        if not last_customer:
-                            remark = (doc.get("remark") or "")
-                            for part in remark.split("|"):
-                                part = part.strip()
-                                if part.lower().startswith("customer:"):
-                                    last_customer = part[len("customer:"):].strip()
-                                    break
+                        remark = (doc.get("remark") or "")
+                        for part in remark.split("|"):
+                            part = part.strip()
+                            if not last_customer and part.lower().startswith("customer:"):
+                                last_customer = part[len("customer:"):].strip()
+                            if part.lower().startswith("lead:"):
+                                last_lead = part[len("lead:"):].strip()
                     except Exception:
                         pass
+
+                    if last_lead:
+                        return redirect(f"{reverse('punch')}?mode=lead&lead={quote(last_lead)}")
+
                     dest = reverse("select_customer")
                     if last_customer:
                         dest = f"{dest}?customer={quote(last_customer)}"
@@ -819,11 +891,14 @@ def punch(request):
 
     cust = (data.get("customer") or "").strip()
     opp = (data.get("opportunity") or "").strip()
+    lead = (data.get("lead") or "").strip()
     free_remark = (data.get("remark_free") or "").strip()
     assign_to_email = (data.get("assign_to_email") or "").strip()
 
-    # Remark logic: if free remark and no customer => use free remark; else include Customer/Opportunity
-    if free_remark and not cust:
+    # Remark logic
+    if lead and not cust:
+        remark_text = f"Lead: {lead}"
+    elif free_remark and not cust:
         remark_text = free_remark
     else:
         remark_text = f"Customer: {cust}" if cust else ""
@@ -858,10 +933,12 @@ def punch(request):
 
     # ----- PUNCH IN -----
     if data.get("log_type") == "IN":
-        next_url = reverse("select_customer")
-        cust = (data.get("customer") or "").strip()
-        if cust:
-            next_url = f"{next_url}?customer={quote(cust)}"
+        if lead:
+            next_url = f"{reverse('punch')}?mode=lead&lead={quote(lead)}"
+        else:
+            next_url = reverse("select_customer")
+            if cust:
+                next_url = f"{next_url}?customer={quote(cust)}"
 
         award_points(
             request.user,
@@ -873,6 +950,43 @@ def punch(request):
 
     # ----- PUNCH OUT -----
     if data.get("log_type") == "OUT":
+        # Lead punch-out: simplified flow (no opportunity/meeting ERP push)
+        if lead:
+            try:
+                sess2 = requests.Session()
+                sess2.cookies.update(request.session.get("frappe_cookies", {}))
+                token2 = getattr(settings, "FRAPPE_API_TOKEN", None)
+                if token2:
+                    sess2.headers.update({"Authorization": f"token {token2}"})
+                emp_name = emp["name"]
+                last_params = {
+                    "fields": '["name","log_type","latitude","longitude"]',
+                    "filters": json.dumps([["employee", "=", emp_name], ["log_type", "=", "IN"]]),
+                    "order_by": "time desc",
+                    "limit_page_length": 1,
+                }
+                last_resp = sess2.get(f"{FRAPPE_BASE_URL}/api/resource/Employee Checkin",
+                                      params=last_params, timeout=10)
+                last_data = (last_resp.json().get("data") or [])
+                near = False
+                d_km = None
+                if last_data and last_data[0].get("latitude") and last_data[0].get("longitude"):
+                    lat_in = float(last_data[0]["latitude"])
+                    lon_in = float(last_data[0]["longitude"])
+                    lat_out = float(data.get("latitude") or 0)
+                    lon_out = float(data.get("longitude") or 0)
+                    d_km = haversine_km(lat_in, lon_in, lat_out, lon_out)
+                    near = (d_km <= 0.2)
+                award_points(
+                    request.user,
+                    2 if near else 1,
+                    EnergyPointTransaction.Reason.PUNCH_OUT_NEAR if near else EnergyPointTransaction.Reason.PUNCH_OUT_FAR,
+                    {"distance_km": round(d_km, 4) if d_km is not None else None, "lead": lead}
+                )
+            except Exception:
+                award_points(request.user, 1, EnergyPointTransaction.Reason.PUNCH_OUT_FAR, {"lead": lead})
+            return JsonResponse({"status": "success", "next_url": reverse("punch")})
+
         meetings = data.get("meeting_details", []) or []
         multi = data.get("meeting_details_by_opportunity") or {}
 

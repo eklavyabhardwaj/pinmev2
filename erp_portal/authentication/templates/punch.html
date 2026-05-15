@@ -17,36 +17,129 @@
       background:#2563eb; border:2px solid #fff;
       border-radius:50%; box-shadow:0 0 0 4px rgba(37,99,235,.25);
     }
+
+    /* Tab switcher */
+    .tab-switcher {
+      display: flex;
+      gap: 6px;
+      margin-bottom: 16px;
+      background: #f1f5f9;
+      border-radius: 12px;
+      padding: 4px;
+    }
+    .tab-btn {
+      flex: 1;
+      padding: 9px 0;
+      border: none;
+      background: transparent;
+      border-radius: 9px;
+      font-size: 14px;
+      font-weight: 600;
+      color: #64748b;
+      cursor: pointer;
+      transition: background .18s, color .18s, box-shadow .18s;
+      box-shadow: none;
+      min-width: 0;
+      height: auto;
+      transform: none;
+    }
+    .tab-btn.active {
+      background: #fff;
+      color: #0f766e;
+      box-shadow: 0 1px 4px rgba(0,0,0,.10);
+    }
+    .tab-btn:hover:not(.active) { color: #374151; background: rgba(255,255,255,.5); box-shadow: none; }
+
+    /* Active lead card */
+    .active-lead-card {
+      background: linear-gradient(135deg, #f0fdf4 0%, #ecfdf5 100%);
+      border: 1.5px solid #6ee7b7;
+      border-radius: 16px;
+      padding: 20px 18px;
+      margin-bottom: 12px;
+      text-align: center;
+    }
+    .active-lead-name {
+      font-size: 20px;
+      font-weight: 700;
+      color: #065f46;
+      margin: 4px 0 0;
+      word-break: break-word;
+    }
+
+    /* Lead status badge */
+    .lead-status {
+      display: inline-block;
+      font-size: 11px;
+      font-weight: 600;
+      padding: 2px 8px;
+      border-radius: 20px;
+      background: #e0f2fe;
+      color: #0369a1;
+      margin-left: 6px;
+      vertical-align: middle;
+    }
   </style>
 </head>
 <body>
   <div class="punch-container">
     <h1 id="greeting">Good Day {{ employee_name }}</h1>
-    <p class="sub" id="listSubtitle">Customers within 5 km of your current location</p>
-    <div id="map"></div>
-    <div class="toolbar">
-      <div class="search" style="position:relative;flex:1;">
-        <div class="dropdown-wrap" id="searchDropdownWrap">
-          <input id="searchBox" type="text" placeholder="Search customer in list…" autocomplete="off" aria-autocomplete="list" aria-haspopup="listbox" aria-expanded="false" aria-controls="searchDropdownList">
-          <div class="dropdown-arrow" aria-hidden="true"></div>
-          <div class="dropdown-list" id="searchDropdownList" role="listbox" tabindex="-1"></div>
+
+    <!-- Tab Switcher -->
+    <div class="tab-switcher" id="tabSwitcher">
+      <button id="tab-customer" class="tab-btn{% if not lead_mode %} active{% endif %}" onclick="switchTab('customer')">Customer</button>
+      <button id="tab-lead" class="tab-btn{% if lead_mode %} active{% endif %}" onclick="switchTab('lead')">Lead</button>
+    </div>
+
+    <!-- ── CUSTOMER SECTION ── -->
+    <div id="section-customer"{% if lead_mode %} style="display:none"{% endif %}>
+      <p class="sub" id="listSubtitle">Customers within 5 km of your current location</p>
+      <div id="map"></div>
+      <div class="toolbar">
+        <div class="search" style="position:relative;flex:1;">
+          <div class="dropdown-wrap" id="searchDropdownWrap">
+            <input id="searchBox" type="text" placeholder="Search customer in list…" autocomplete="off" aria-autocomplete="list" aria-haspopup="listbox" aria-expanded="false" aria-controls="searchDropdownList">
+            <div class="dropdown-arrow" aria-hidden="true"></div>
+            <div class="dropdown-list" id="searchDropdownList" role="listbox" tabindex="-1"></div>
+          </div>
         </div>
       </div>
+      <div class="toolbar">
+        <button id="btn-in-generic" class="btn" title="Punch in without selecting a listed customer">
+          Punch In (New Customer)
+        </button>
+        <form action="{% url 'energy_points' %}" method="get" style="display:inline;">
+          <button type="submit" class="btn btn-secondary">Energy Points</button>
+        </form>
+      </div>
+      <ul id="custList" class="list"></ul>
     </div>
-    <div class="toolbar">
-      <button id="btn-in-generic" class="btn" title="Punch in without selecting a listed customer">
-        Punch In (New Customer)
-      </button>
 
-          <form action="{% url 'energy_points' %}" method="get" style="display:inline;">
-  <button type="submit" class="btn btn-secondary">Energy Points</button>
-</form>
-
+    <!-- ── LEAD SECTION ── -->
+    <div id="section-lead"{% if not lead_mode %} style="display:none"{% endif %}>
+      {% if lead_mode %}
+      <!-- Active lead punch-out state -->
+      <div class="active-lead-card">
+        <p class="muted" style="margin-bottom:6px">Currently punched in for lead:</p>
+        <h2 class="active-lead-name" id="activeLeadName">{{ active_lead }}</h2>
+        <div style="margin-top:14px">
+          <label style="font-size:13px;color:#64748b;font-weight:600;display:block;margin-bottom:6px">Notes (optional)</label>
+          <textarea id="leadOutNotes" rows="3" placeholder="Add any notes about this visit…" style="width:100%;border-radius:10px;border:1.5px solid #e2e8f0;padding:10px 12px;font-size:14px;resize:vertical;font-family:inherit"></textarea>
+        </div>
+        <button id="btn-lead-out" class="btn btn-danger" style="margin-top:14px;width:100%">Punch Out</button>
+      </div>
+      {% else %}
+      <!-- Lead list + search -->
+      <p class="sub">Your assigned leads</p>
+      <div class="toolbar" style="margin-bottom:10px">
+        <div class="search" style="position:relative;flex:1;">
+          <input id="leadSearchBox" type="text" placeholder="Search by lead name or organization…" autocomplete="off" style="width:100%">
+        </div>
+      </div>
+      <ul id="leadList" class="list"></ul>
+      {% endif %}
     </div>
 
-
-
-    <ul id="custList" class="list"></ul>
     <div id="status" class="status"></div>
 
     <div class="copyright" class="copyright">
@@ -398,6 +491,207 @@
 
     // UI events
     document.getElementById('btn-in-generic').addEventListener('click', () => doPunchIn(null, btnNoCust));
+
+    // ── TAB SWITCHING ──
+    function switchTab(tab) {
+      const isLead = tab === 'lead';
+      document.getElementById('section-customer').style.display = isLead ? 'none' : '';
+      document.getElementById('section-lead').style.display     = isLead ? '' : 'none';
+      document.getElementById('tab-customer').classList.toggle('active', !isLead);
+      document.getElementById('tab-lead').classList.toggle('active', isLead);
+      setStatus('');
+      if (isLead && !LEAD_MODE) loadMyLeads();
+    }
+
+    // ── LEAD SECTION JS ──
+    const LEAD_MODE  = {{ lead_mode|yesno:"true,false"|default:"false" }};
+    const ACTIVE_LEAD = "{{ active_lead|escapejs }}";
+
+    // Lead punch-out
+    {% if lead_mode %}
+    document.getElementById('btn-lead-out').addEventListener('click', function() {
+      const btn = this;
+      btn.disabled = true;
+      setStatus('Punching OUT…', 'loading');
+      if (!navigator.geolocation) {
+        setStatus('Geolocation not supported', 'error');
+        btn.disabled = false;
+        return;
+      }
+      navigator.geolocation.getCurrentPosition(async pos => {
+        const payload = {
+          log_type: 'OUT',
+          time: new Date().toISOString(),
+          device_id: navigator.userAgent,
+          longitude: pos.coords.longitude,
+          latitude:  pos.coords.latitude,
+          city: '', state: '', area: '',
+          lead: ACTIVE_LEAD,
+          notes: (document.getElementById('leadOutNotes')?.value || '').trim(),
+        };
+        try {
+          const csrf = document.cookie.match(/(^|;)\s*csrftoken=([^;]+)/)?.pop();
+          const res = await fetch("{% url 'punch' %}", {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'X-CSRFToken': csrf },
+            body: JSON.stringify(payload),
+          });
+          const result = await res.json();
+          if (res.ok) {
+            setStatus('Punch OUT recorded successfully', 'success');
+            window.location.href = result.next_url || "{% url 'punch' %}";
+          } else {
+            setStatus(`Error: ${result.detail || res.status}`, 'error');
+            btn.disabled = false;
+          }
+        } catch {
+          setStatus('Network error occurred', 'error');
+          btn.disabled = false;
+        }
+      }, err => {
+        setStatus('Geolocation error: ' + err.message, 'error');
+        btn.disabled = false;
+      }, { maximumAge: 15000, timeout: 10000 });
+    });
+    {% endif %}
+
+    // Load my leads
+    let myLeads = [];
+    async function loadMyLeads() {
+      const listEl = document.getElementById('leadList');
+      if (!listEl) return;
+      listEl.innerHTML = '<li class="muted" style="text-align:center;padding:8px">Loading leads…</li>';
+      try {
+        const r = await fetch("{% url 'get_my_leads' %}");
+        const data = await r.json();
+        myLeads = data.leads || [];
+        renderLeadList(myLeads);
+      } catch {
+        if (listEl) listEl.innerHTML = '<li class="muted" style="text-align:center;padding:8px">Failed to load leads.</li>';
+      }
+    }
+
+    function renderLeadList(leads) {
+      const listEl = document.getElementById('leadList');
+      if (!listEl) return;
+      listEl.innerHTML = '';
+      if (!leads.length) {
+        listEl.innerHTML = '<li class="muted" style="text-align:center;padding:8px">No leads found.</li>';
+        return;
+      }
+      leads.forEach(lead => {
+        const li = document.createElement('li');
+        li.className = 'card';
+
+        const info = document.createElement('div');
+        info.className = 'info';
+
+        const nameSpan = document.createElement('span');
+        nameSpan.className = 'title';
+        nameSpan.textContent = lead.lead_name || lead.name;
+
+        const sub = document.createElement('span');
+        sub.className = 'muted';
+        const parts = [lead.company_name && `🏢 ${lead.company_name}`, lead.territory].filter(Boolean);
+        sub.textContent = parts.join(' · ');
+
+        const statusBadge = document.createElement('span');
+        statusBadge.className = 'lead-status';
+        statusBadge.textContent = lead.status || '';
+
+        info.appendChild(nameSpan);
+        info.appendChild(statusBadge);
+        if (parts.length) info.appendChild(sub);
+
+        const actions = document.createElement('div');
+        actions.className = 'actions';
+
+        if (lead.mobile_no) {
+          const call = document.createElement('a');
+          call.href = `tel:${lead.mobile_no}`;
+          call.className = 'btn btn-secondary link';
+          call.textContent = 'Call';
+          call.style.cssText = 'font-size:13px;padding:8px 12px';
+          call.addEventListener('click', e => e.stopPropagation());
+          actions.appendChild(call);
+        }
+
+        const punchBtn = document.createElement('button');
+        punchBtn.className = 'btn';
+        punchBtn.textContent = 'Punch In';
+        punchBtn.onclick = (e) => { e.stopPropagation(); doPunchInLead(lead.name, punchBtn); };
+        actions.appendChild(punchBtn);
+
+        li.appendChild(info);
+        li.appendChild(actions);
+        listEl.appendChild(li);
+      });
+    }
+
+    async function doPunchInLead(leadName, triggerBtn) {
+      setStatus('Punching IN…', 'loading');
+      if (triggerBtn) triggerBtn.disabled = true;
+      if (!navigator.geolocation) {
+        setStatus('Geolocation not supported', 'error');
+        if (triggerBtn) triggerBtn.disabled = false;
+        return;
+      }
+      navigator.geolocation.getCurrentPosition(async pos => {
+        const payload = {
+          log_type: 'IN',
+          time: new Date().toISOString(),
+          device_id: navigator.userAgent,
+          longitude: pos.coords.longitude,
+          latitude:  pos.coords.latitude,
+          city: '', state: '', area: '',
+          lead: leadName,
+          customer: '',
+        };
+        try {
+          const csrf = document.cookie.match(/(^|;)\s*csrftoken=([^;]+)/)?.pop();
+          const res = await fetch("{% url 'punch' %}", {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'X-CSRFToken': csrf },
+            body: JSON.stringify(payload),
+          });
+          const result = await res.json();
+          if (res.ok) {
+            setStatus('Punch IN recorded successfully', 'success');
+            window.location.href = result.next_url || "{% url 'punch' %}";
+          } else {
+            setStatus(`Error: ${result.detail || res.status}`, 'error');
+            if (triggerBtn) triggerBtn.disabled = false;
+          }
+        } catch {
+          setStatus('Network error occurred', 'error');
+          if (triggerBtn) triggerBtn.disabled = false;
+        }
+      }, err => {
+        setStatus('Geolocation error: ' + err.message, 'error');
+        if (triggerBtn) triggerBtn.disabled = false;
+      }, { maximumAge: 15000, timeout: 10000 });
+    }
+
+    // Lead search
+    {% if not lead_mode %}
+    (function() {
+      const inp = document.getElementById('leadSearchBox');
+      if (!inp) return;
+      let timer = null;
+      inp.addEventListener('input', e => {
+        const q = e.target.value.trim();
+        clearTimeout(timer);
+        if (!q) { renderLeadList(myLeads); return; }
+        timer = setTimeout(async () => {
+          try {
+            const r = await fetch(`{% url 'search_leads' %}?q=${encodeURIComponent(q)}`);
+            const data = await r.json();
+            renderLeadList(data.leads || []);
+          } catch { /* ignore */ }
+        }, 300);
+      });
+    })();
+    {% endif %}
   </script>
 
 <!-- Full-name toast -->
